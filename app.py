@@ -4473,6 +4473,7 @@ def render_board(g, view, readonly=False):
         cell_costs=st.session_state.get("_lw_cell_costs"),
         phase_banner=st.session_state.get("_lw_phase_banner"),
         notice=st.session_state.get("_lw_board_notice"),
+        turn_pop=st.session_state.get("_lw_turn_pop"),
         key=f"board_component_{st.session_state.ui_board_key}",
         default=None,
     )
@@ -18749,6 +18750,17 @@ def render_phase_badge(g, view=None):
     label = "🛠️ Phase de production" if g["phase"] == "build" else "⚔️ Phase de manœuvres"
     # Faction qui doit jouer maintenant.
     turn_owner = f"🎯 À jouer : {escape(faction_of(g, g['active'])['name'])}"
+    # Qui ouvrira la prochaine phase de manœuvres (le joueur 1 change à
+    # chaque tour) : celle de ce tour en production, celle du tour suivant
+    # pendant les manœuvres.
+    opener = g["first"] if g["phase"] == "build" else 1 - g["first"]
+    next_moves = f" · ⚔️ Prochaines manœuvres : {escape(faction_of(g, opener)['name'])} commence"
+    if g["phase"] == "build":
+        # Productions simultanées : le joueur 1 du tour est prioritaire.
+        turn_owner += (
+            f" · 👑 Joueur 1 : {escape(faction_of(g, g['first'])['name'])}"
+            f" · Joueur 2 : {escape(faction_of(g, 1 - g['first'])['name'])}"
+        )
     # Bases ennemies détruites par ce joueur, et celles qui restent à abattre.
     destroyed = int(g["players"][viewer].get("bases", 0))
     if g.get("victory_mode") == "bases":
@@ -18764,7 +18776,7 @@ def render_phase_badge(g, view=None):
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
-            + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label} · {turn_owner}{money}{bases}{clock}</div>',
+            + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label} · {turn_owner}{next_moves}{money}{bases}{clock}</div>',
             unsafe_allow_html=True,
         )
 
@@ -19849,6 +19861,164 @@ def board_event(event, g, view):
         if clicked is not None and clicked["owner"] in (0, 1) and clicked["owner"] != board_viewer(g):
             st.session_state["ui_enemy_id"] = clicked["id"]
     return _lw_enemy_previous_board_event(event, g, view)
+
+
+# ============================================================
+# PRODUCTION : JOUEUR 1 PRIORITAIRE, JOUEUR 2 PRÉVENU
+# Les productions se jouent en même temps, mais le joueur 1 du tour
+# (g["first"], qui change à chaque tour) est prioritaire. Le joueur 2 ne
+# peut pas poser une pièce (recrue, bâtiment, base, héros ou ouvrier
+# déplacé) sur une case où le joueur 1 a déjà produit.
+# ============================================================
+
+def production_rank(g, owner):
+    return 1 if owner == g["first"] else 2
+
+
+def first_player_plan(bundle):
+    """Production en cours (ou validée) du joueur 1, vue par le joueur 2."""
+    g = bundle["game"]
+    first = g["first"]
+    try:
+        room = online_active_room() if st.query_params.get("room") else None
+    except Exception:
+        room = None
+    if room is not None:
+        drafts = room.get("drafts") or {}
+        return drafts.get(first, drafts.get(str(first)))
+    if g.get("ready") == [first]:
+        return bundle.get("committed")
+    return None
+
+
+def production_reserved_cells(bundle):
+    """{case: pièce} prises par la production du joueur 1 (nouvelles ou déplacées)."""
+    g = bundle["game"]
+    if g["phase"] != "build" or g["active"] == g["first"]:
+        return {}
+    plan = first_player_plan(bundle)
+    if not plan:
+        return {}
+    first = g["first"]
+    public = {e["id"]: tuple(e["pos"]) for e in g["entities"]}
+    return {
+        tuple(e["pos"]): e for e in plan["entities"]
+        if e["owner"] == first and public.get(e["id"]) != tuple(e["pos"])
+    }
+
+
+def my_produced_cells(bundle):
+    """{case: pièce} où le joueur actif a produit (nouvelle pièce ou déplacée)."""
+    g = bundle["game"]
+    draft = bundle.get("draft")
+    if not draft:
+        return {}
+    me = g["active"]
+    public = {e["id"]: tuple(e["pos"]) for e in g["entities"]}
+    return {
+        tuple(e["pos"]): e for e in draft["entities"]
+        if e["owner"] == me and public.get(e["id"]) != tuple(e["pos"])
+    }
+
+
+PRIORITY_CELL_MESSAGE = (
+    "⚠️ Attention : la case {cell} est déjà occupée par l'autre joueur ({faction}, joueur 1 "
+    "ce tour), qui a déjà produit sur cette case. Il est prioritaire : choisis une autre case."
+)
+
+_lw_prio_previous_draft_action = draft_action
+
+
+def draft_action(bundle, fn, *args):
+    reserved = production_reserved_cells(bundle)
+    if not reserved:
+        return _lw_prio_previous_draft_action(bundle, fn, *args)
+    before = my_produced_cells(bundle)
+    result = _lw_prio_previous_draft_action(bundle, fn, *args)
+    after = my_produced_cells(bundle)
+    for pos, piece in after.items():
+        if pos in reserved and (pos not in before or before[pos]["id"] != piece["id"]):
+            g = bundle["game"]
+            # perform() annule l'action : rien n'est dépensé ni posé.
+            raise ValueError(PRIORITY_CELL_MESSAGE.format(
+                cell=coord(pos), faction=faction_of(g, g["first"])["name"]
+            ))
+    return result
+
+
+def render_production_order(bundle):
+    """Qui est joueur 1 (prioritaire) et joueur 2 ce tour, dans le menu."""
+    g = bundle["game"]
+    me = g["active"]
+    first, second = g["first"], 1 - g["first"]
+    st.markdown(
+        f"**👑 Joueur 1 (prioritaire) : {faction_of(g, first)['name']}** · "
+        f"Joueur 2 : {faction_of(g, second)['name']}  \n"
+        f"Tu es le **joueur {production_rank(g, me)}** de cette production "
+        "(l'ordre change à chaque tour)."
+    )
+    if me == g["first"]:
+        return
+    reserved = production_reserved_cells(bundle)
+    lost = [pos for pos in my_produced_cells(bundle) if pos in reserved]
+    if lost:
+        st.warning(
+            "⚠️ Le joueur 1 a produit sur "
+            + ", ".join(coord(pos) for pos in sorted(lost))
+            + " après toi : il est prioritaire. Ta pièce y sera déplacée sur la case libre "
+            "la plus proche, sauf si tu la replaces toi-même."
+        )
+    elif reserved:
+        st.caption(
+            "Cases déjà prises par la production du joueur 1 : "
+            + ", ".join(coord(pos) for pos in sorted(reserved))
+        )
+
+
+_lw_prio_previous_render_build_controls = render_build_controls
+
+
+def render_build_controls(g, view, local=False, on_board=False):
+    bundle = st.session_state.get("bundle")
+    if (
+        not on_board and isinstance(bundle, dict) and isinstance(bundle.get("game"), dict)
+        and bundle["game"].get("turn") == g.get("turn") and g["phase"] == "build"
+    ):
+        render_production_order(bundle)
+    return _lw_prio_previous_render_build_controls(g, view, local=local, on_board=on_board)
+
+
+# ============================================================
+# « C'EST À VOUS DE JOUER » : petit pop sur le plateau, sous le badge,
+# chaque fois que la main revient au joueur de cet écran.
+# ============================================================
+
+_lw_turnpop_previous_render_board = render_board
+
+
+def render_board(g, view, readonly=False):
+    bundle = st.session_state.get("bundle")
+    room = online_active_room() if st.query_params.get("room") else None
+    if room is not None:
+        bundle = room.get("bundle") or bundle
+    game_id = (bundle or {}).get("game_id") or (bundle or {}).get("code") or ""
+    viewer = fx_viewer(bundle, g)
+    state = [str(game_id), g["turn"], g["phase"], g["active"]]
+    previous = st.session_state.get("_lw_turn_state")
+    st.session_state["_lw_turn_state"] = state
+    playing = g.get("winner") is None and not g.get("curtain") and not readonly and g["active"] == viewer
+    if playing and previous != state:
+        count = int(st.session_state.get("_lw_turn_pop_count", 0)) + 1
+        st.session_state["_lw_turn_pop_count"] = count
+        local = ai_config(bundle) is None and room is None
+        st.session_state["_lw_turn_pop"] = {
+            "key": f"{game_id}:{count}:{int(time.time() * 1000)}",
+            "text": "🎯 C'est à vous de jouer !",
+            "sub": faction_of(g, g["active"])["name"] if local else "",
+        }
+    elif not playing:
+        st.session_state["_lw_turn_pop"] = None
+    return _lw_turnpop_previous_render_board(g, view, readonly)
 
 
 # ============================================================

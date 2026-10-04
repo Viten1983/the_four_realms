@@ -1648,6 +1648,53 @@
       }
     }
 
+    // « C'est à vous de jouer » : pop bref sous le badge du plateau (page
+    // parente), une fois les animations et l'annonce de phase terminées.
+    let pendingTurnPop = null;
+    let turnPopTimer = null;
+    function drawTurnPop() {
+      const info = args.turn_pop;
+      if (!info || !info.key) { pendingTurnPop = null; return; }
+      const id = `turnpop:${info.key}`;
+      if (playedFx.has(id)) return;
+      rememberFx(id);
+      pendingTurnPop = info;
+      if (!turnPopTimer) turnPopTimer = setInterval(maybeTurnPop, 150);
+    }
+    function maybeTurnPop() {
+      if (!pendingTurnPop) { clearInterval(turnPopTimer); turnPopTimer = null; return; }
+      if (fxBusy || fxQueue.length || pendingAnnounce || walking > 0 || performance.now() < announceUntil) return;
+      const info = pendingTurnPop;
+      pendingTurnPop = null;
+      clearInterval(turnPopTimer); turnPopTimer = null;
+      showTurnPop(info);
+    }
+    function showTurnPop(info) {
+      try {
+        const doc = window.parent.document;
+        const old = doc.getElementById("lw-turn-pop");
+        if (old) old.remove();
+        const badge = doc.querySelector(".lw-phase-badge");
+        const r = badge ? badge.getBoundingClientRect() : null;
+        const pop = doc.createElement("div");
+        pop.id = "lw-turn-pop";
+        const top = r && r.height ? r.bottom + 8 : 110;
+        const left = r && r.height ? r.left : 24;
+        pop.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:2147482000;pointer-events:none;`
+          + "padding:8px 18px;border-radius:12px;background:linear-gradient(180deg,#facc15,#d97706);"
+          + "color:#1c1917;font-weight:900;font-size:18px;border:2px solid #fde68a;"
+          + "box-shadow:0 6px 18px rgba(0,0,0,0.45);opacity:0;transform:translateY(-6px);"
+          + "transition:opacity 160ms ease,transform 160ms ease;font-family:inherit;";
+        pop.textContent = info.text + (info.sub ? ` — ${info.sub}` : "");
+        doc.body.appendChild(pop);
+        requestAnimationFrame(() => { pop.style.opacity = "1"; pop.style.transform = "translateY(0)"; });
+        setTimeout(() => { pop.style.opacity = "0"; pop.style.transform = "translateY(-6px)"; }, 1500);
+        setTimeout(() => pop.remove(), 1750);
+      } catch (error) {
+        // Page parente inaccessible : pas de pop.
+      }
+    }
+
     // Message d'information au centre du plateau (ex. or ou mana insuffisant),
     // une fois par tentative, pendant 3 secondes.
     function drawNotice() {
@@ -1957,6 +2004,7 @@ if (reachable || placed) {
         animateLastMove();
         queueFx();
         maybeAnnounce();
+        drawTurnPop();
       }
       wrapper.scrollLeft = previousScrollLeft;
       wrapper.scrollTop = previousScrollTop;
