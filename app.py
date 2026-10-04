@@ -18417,11 +18417,13 @@ def piece_range_text(name):
     return f"Tir à distance : {reach} case{'s' if reach > 1 else ''}" if reach > 0 else "Corps à corps"
 
 
-def render_selected_card(g, view):
-    st.markdown("### 📋 Pièce sélectionnée")
-    piece = selected_entity(view)
+def render_selected_card(g, view, piece=None, title="### 📋 Pièce sélectionnée",
+                         empty="Clique sur une unité ou un bâtiment du plateau pour voir ses caractéristiques."):
+    st.markdown(title)
+    if piece is None and title.endswith("Pièce sélectionnée"):
+        piece = selected_entity(view)
     if piece is None:
-        st.caption("Clique sur une unité ou un bâtiment du plateau pour voir ses caractéristiques.")
+        st.caption(empty)
         return
     owner_name = faction_of(view, piece["owner"])["name"]
     st.markdown(f"**{piece['name']}** — {owner_name} · {coord(piece['pos'])}")
@@ -18504,7 +18506,8 @@ SIDEBAR_CSS = """
 /* Rubriques du menu de gauche */
 section[data-testid="stSidebar"] .st-key-lw_side_info,
 section[data-testid="stSidebar"] .st-key-lw_side_actions,
-section[data-testid="stSidebar"] .st-key-lw_side_unit {
+section[data-testid="stSidebar"] .st-key-lw_side_unit,
+section[data-testid="stSidebar"] .st-key-lw_side_enemy {
     background: #fffdf7;
 }
 section[data-testid="stSidebar"] h3 { margin-top: 0 !important; }
@@ -18678,6 +18681,13 @@ def render_sidebar(bundle):
         # 3. Pièce sélectionnée
         with st.container(border=True, key="lw_side_unit"):
             render_selected_card(g, view)
+
+        # 4. Pièce adverse : la dernière cliquée sur le plateau.
+        with st.container(border=True, key="lw_side_enemy"):
+            render_selected_card(
+                g, view, piece=inspected_enemy(view), title="### 🔍 Pièce adverse",
+                empty="Clique sur une unité ou un bâtiment adverse du plateau pour voir ses caractéristiques.",
+            )
 
 
 # --- Journal de la partie : en haut du journal de bord (plus en bas de page).
@@ -19800,6 +19810,48 @@ def render_online_lobby(room, seat):
 
 
 # ============================================================
+# FICHE D'UNE PIÈCE ADVERSE
+# Un clic sur une pièce ennemie (visible) l'affiche dans le menu de gauche,
+# sans changer ce que le clic fait déjà (cible d'attaque, sort…).
+# ============================================================
+
+def board_viewer(g):
+    bundle = st.session_state.get("bundle")
+    room = online_active_room() if st.query_params.get("room") else None
+    if room is not None:
+        bundle = room.get("bundle") or bundle
+    return fx_viewer(bundle, g)
+
+
+def inspected_enemy(view):
+    eid = st.session_state.get("ui_enemy_id")
+    if eid is None:
+        return None
+    piece = next((e for e in view["entities"] if e["id"] == eid), None)
+    if piece is None or piece["owner"] == board_viewer(view):
+        return None
+    return piece
+
+
+_lw_enemy_previous_board_event = board_event
+
+
+def board_event(event, g, view):
+    if (
+        isinstance(event, dict) and event.get("type") == "cell_click"
+        and isinstance(event.get("event_id"), str)
+        and event["event_id"] != st.session_state.get("ui_last_event")
+    ):
+        try:
+            clicked = at(view, require_position(event.get("pos")))
+        except Exception:
+            clicked = None
+        if clicked is not None and clicked["owner"] in (0, 1) and clicked["owner"] != board_viewer(g):
+            st.session_state["ui_enemy_id"] = clicked["id"]
+    return _lw_enemy_previous_board_event(event, g, view)
+
+
+# ============================================================
 # IA : UNE CASE DE RESSOURCE DÉJÀ RÉCOLTÉE N'ATTIRE PLUS DE BASE
 # (une seule base récolte chaque case : voir resource_owner_base)
 # ============================================================
@@ -19857,7 +19909,8 @@ _LW_PANELS = (
     ".st-key-lw_home_local, .st-key-lw_home_codex, "
     "section[data-testid='stSidebar'] .st-key-lw_side_info, "
     "section[data-testid='stSidebar'] .st-key-lw_side_actions, "
-    "section[data-testid='stSidebar'] .st-key-lw_side_unit"
+    "section[data-testid='stSidebar'] .st-key-lw_side_unit, "
+    "section[data-testid='stSidebar'] .st-key-lw_side_enemy"
 )
 
 MEDIEVAL_CSS = """
@@ -20079,7 +20132,8 @@ section[data-testid="stSidebar"] h3 {
 }
 section[data-testid="stSidebar"] .st-key-lw_side_info,
 section[data-testid="stSidebar"] .st-key-lw_side_actions,
-section[data-testid="stSidebar"] .st-key-lw_side_unit { padding: 18px 16px !important; }
+section[data-testid="stSidebar"] .st-key-lw_side_unit,
+section[data-testid="stSidebar"] .st-key-lw_side_enemy { padding: 18px 16px !important; }
 
 /* ---- Partie : bandeau du titre ---- */
 .st-key-lw_logo_banner {
