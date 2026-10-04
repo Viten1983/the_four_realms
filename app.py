@@ -19599,8 +19599,8 @@ HOME_CSS = """
     background-attachment: fixed !important;
 }
 .stApp .block-container { max-width: 1180px !important; padding-top: 2.2rem !important; }
-.lw-hero { text-align: center; margin: -1rem auto 1.4rem; max-width: 500px; }
-.lw-hero-small { max-width: 300px; }
+.lw-hero { text-align: center; margin: -1rem auto 1.4rem; max-width: 333px; }
+.lw-hero-small { max-width: 260px; }
 .lw-hero-frame {
     position: relative; padding: 6px;
     background: #000;
