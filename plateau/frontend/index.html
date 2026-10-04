@@ -316,6 +316,8 @@
 
     function emitCellClick(q, r) {
       if (!args || args.readonly) return;
+      // Annonce de phase à l'écran : on lit d'abord la phase.
+      if (performance.now() < announceUntil) return;
       // Verrou bloqué depuis trop longtemps : on l'ignore.
       if (locked && Date.now() - lockedAt < UNLOCK_AFTER_MS) return;
       locked = true;
@@ -1562,6 +1564,32 @@
       return p.matrixTransform(matrix.inverse());
     }
 
+    // Pendant l'annonce de phase, aucune action possible : un voile
+    // transparent couvre toute la page (menu de gauche compris). Le minuteur
+    // tourne dans la page parente : le voile part même si le plateau est
+    // redessiné entre-temps.
+    function lockPageDuring(ms) {
+      try {
+        const host = window.parent;
+        const doc = host && host.document;
+        if (!doc || !doc.body) return;
+        let veil = doc.getElementById("lw-announce-veil");
+        if (!veil) {
+          veil = doc.createElement("div");
+          veil.id = "lw-announce-veil";
+          veil.style.cssText = "position:fixed;inset:0;z-index:2147483000;background:transparent;cursor:wait;";
+          doc.body.appendChild(veil);
+        }
+        if (host.__lwVeilTimer) host.clearTimeout(host.__lwVeilTimer);
+        host.__lwVeilTimer = host.setTimeout(() => {
+          const old = doc.getElementById("lw-announce-veil");
+          if (old) old.remove();
+        }, ms);
+      } catch (error) {
+        // Page parente inaccessible : le plateau reste verrouillé seul.
+      }
+    }
+
     function drawPhaseAnnounce() {
       const info = args.phase_banner;
       if (!info || !info.key) return;
@@ -1569,6 +1597,7 @@
       if (playedFx.has(id)) return;
       rememberFx(id);
       announceUntil = performance.now() + 2250;
+      lockPageDuring(2250);
       const layer = svgNode("g", { "pointer-events": "none" });
       const w = baseW * 0.62, h = Math.max(110, baseH * 0.14);
       // Au centre de la partie du plateau visible à l'écran.

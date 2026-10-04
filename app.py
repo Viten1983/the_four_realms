@@ -12496,11 +12496,8 @@ _lw_wp_previous_render_move_controls = render_move_controls
 
 
 def render_move_controls(g):
-    st.toggle(
-        "🧭 Tracer le chemin case par case",
-        key="ui_waypoint_mode",
-        help="Clique chaque case du trajet, puis reclique sur la dernière case pour partir.",
-    )
+    # Tracé du chemin case par case retiré du menu : le mode reste désactivé.
+    st.session_state["ui_waypoint_mode"] = False
     unit = waypoint_unit(g)
     if unit is not None:
         path = current_waypoints()
@@ -18722,11 +18719,46 @@ def render_phase_badge(g, view=None):
     player = ((view or g).get("players") or g["players"])[viewer]
     money = f" · 💰 {player['gold']} or · 🔮 {player['mana']} mana"
     label = "🛠️ Phase de production" if g["phase"] == "build" else "⚔️ Phase de manœuvres"
+    # Bases ennemies détruites par ce joueur, et celles qui restent à abattre.
+    destroyed = int(g["players"][viewer].get("bases", 0))
+    if g.get("victory_mode") == "bases":
+        bases = f" · 🏰 {destroyed} détruite{'s' if destroyed > 1 else ''}, {max(0, 3 - destroyed)} à détruire"
+    else:
+        bases = f" · 🏰 {destroyed} base{'s' if destroyed > 1 else ''} détruite{'s' if destroyed > 1 else ''}"
+    clock, clock_css = "", ""
+    if g.get("victory_mode") != "bases":
+        # Chrono qui défile tout seul dans la page (sans rechargement).
+        seconds = max(0, math.ceil(g.get("remaining", 0)))
+        clock = f' · ⏱️ <span class="lw-clock" data-start="{seconds}">{seconds // 60:02d}:{seconds % 60:02d}</span>'
+        clock_css = LW_CLOCK_CSS.replace("SECONDS", str(seconds))
     with st.container(key="lw_phase_badge"):
         st.markdown(
-            PHASE_BADGE_CSS + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label}{money}</div>',
+            PHASE_BADGE_CSS + clock_css
+            + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label}{money}{bases}{clock}</div>',
             unsafe_allow_html=True,
         )
+
+
+# Compte à rebours en CSS : --lw-clock descend d'une seconde à chaque pas ;
+# minutes et secondes en sont déduites et affichées par des compteurs.
+LW_CLOCK_CSS = """
+<style>
+@property --lw-clock { syntax: '<integer>'; inherits: false; initial-value: 0; }
+@property --lw-min { syntax: '<integer>'; inherits: false; initial-value: 0; }
+@keyframes lw-countdown-SECONDS { from { --lw-clock: SECONDS; } to { --lw-clock: 0; } }
+.lw-clock {
+    --lw-clock: SECONDS;
+    --lw-min: calc((var(--lw-clock) - 30) / 60);
+    animation: lw-countdown-SECONDS calc(SECONDS * 1s) steps(SECONDS) forwards;
+    counter-reset: lw-m var(--lw-min) lw-s calc(var(--lw-clock) - var(--lw-min) * 60);
+    font-size: 0;
+}
+.lw-clock::after {
+    content: counter(lw-m, decimal-leading-zero) ":" counter(lw-s, decimal-leading-zero);
+    font-size: 14px;
+}
+</style>
+"""
 
 
 # ============================================================
