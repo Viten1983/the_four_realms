@@ -16,7 +16,7 @@ from pathlib import Path
 
 st.set_page_config(
     page_title="The Four Realms",
-    page_icon="⚔️",
+    page_icon=str(Path(__file__).resolve().parent / "assets" / "favicon.png"),
     layout="wide",
 )
 
@@ -19181,18 +19181,18 @@ section[data-testid="stSidebar"] .st-key-lw_side_unit { padding: 18px 16px !impo
                         rgba(217, 180, 95, 0.0) 60%, rgba(217, 180, 95, 0.55) 78%, transparent 96%) center 46% / 100% 1px no-repeat,
         linear-gradient(90deg, transparent 8%, rgba(217, 180, 95, 0.3) 25%, rgba(217, 180, 95, 0.0) 40%,
                         rgba(217, 180, 95, 0.0) 60%, rgba(217, 180, 95, 0.3) 75%, transparent 92%) center 54% / 100% 1px no-repeat,
-        radial-gradient(ellipse at center, rgba(120, 30, 20, 0.35), transparent 60%),
+        radial-gradient(ellipse 38% 90% at center, #000 60%, rgba(0, 0, 0, 0) 100%),
         url("app/static/ui/leather.jpg") !important;
     border: 1px solid var(--lw-gold-dark) !important;
     box-shadow: inset 0 0 0 3px #120c07, inset 0 0 0 4px rgba(217, 180, 95, 0.35),
                 0 8px 24px rgba(0, 0, 0, 0.55) !important;
 }
 
-.stApp .st-key-lw_logo_banner { padding: 10px 12px !important; }
+.stApp .st-key-lw_logo_banner { padding: 8px 12px !important; }
 .stApp .st-key-lw_logo_banner img {
-    height: 58px !important;
-    -webkit-mask-image: none !important; mask-image: none !important;
-    box-shadow: 0 0 0 1px #000, 0 4px 14px rgba(0, 0, 0, 0.7), 0 0 26px rgba(160, 40, 30, 0.35);
+    height: 74px !important;
+    -webkit-mask-image: radial-gradient(ellipse 52% 75% at center, #000 70%, transparent 100%) !important;
+    mask-image: radial-gradient(ellipse 52% 75% at center, #000 70%, transparent 100%) !important;
 }
 
 .stApp .block-container { padding-top: 3.2rem !important; }
@@ -19377,10 +19377,11 @@ HOME_CSS = """
     background-attachment: fixed !important;
 }
 .stApp .block-container { max-width: 1180px !important; padding-top: 2.2rem !important; }
-.lw-hero { text-align: center; margin: 0 auto 1.4rem; max-width: 660px; }
+.lw-hero { text-align: center; margin: -1rem auto 1.4rem; max-width: 500px; }
+.lw-hero-small { max-width: 300px; }
 .lw-hero-frame {
-    position: relative; padding: 14px 26px;
-    background: radial-gradient(ellipse at center, rgba(40, 28, 16, 0.85), rgba(10, 7, 4, 0.92));
+    position: relative; padding: 6px;
+    background: #000;
     border: 1px solid #a07c3a; border-radius: 4px;
     box-shadow: inset 0 0 0 4px #0d0906, inset 0 0 0 5px rgba(217, 180, 95, 0.45),
                 0 0 60px rgba(217, 160, 70, 0.22), 0 18px 50px rgba(0, 0, 0, 0.75);
@@ -19388,14 +19389,17 @@ HOME_CSS = """
 .lw-hero-frame::before {
     content: ""; position: absolute; inset: 3px; pointer-events: none; background: CORNERS;
 }
-.lw-hero-frame img { width: 100%; display: block; border-radius: 2px; }
+.lw-hero-frame img { width: 100%; display: block; border-radius: 2px;
+    -webkit-mask-image: radial-gradient(ellipse 72% 72% at center, #000 78%, transparent 100%);
+            mask-image: radial-gradient(ellipse 72% 72% at center, #000 78%, transparent 100%); }
 .lw-hero-sub {
     display: flex; align-items: center; justify-content: center; gap: 14px;
     margin-top: 16px; font-family: "Cinzel", Georgia, serif; font-size: 15px; font-weight: 700;
     letter-spacing: 0.32em; text-transform: uppercase; color: #e7cf94; text-shadow: 0 2px 4px #000;
+    white-space: nowrap;
 }
 .lw-hero-sub::before, .lw-hero-sub::after {
-    content: ""; flex: 0 1 140px; height: 1px;
+    content: ""; flex: 1 1 60px; max-width: 140px; height: 1px;
     background: linear-gradient(90deg, transparent, #d9b45f);
 }
 .lw-hero-sub::after { background: linear-gradient(270deg, transparent, #d9b45f); }
@@ -19415,8 +19419,20 @@ HOME_CSS = """
 """.replace("CORNERS", _LW_CORNERS)
 
 
-# En partie : le ruban rouge du titre, net et lisible.
+# En partie : le titre doré du logo, net et lisible.
 LOGO_BANNER = Path(__file__).resolve().parent / "assets" / "logo_ruban.jpg"
+# Logo complet (épée et quatre blasons), servi par Streamlit.
+LOGO_HOME_URL = "app/static/ui/logo_four_realms.jpg"
+
+
+def render_logo_hero(subtitle, small=False):
+    st.markdown(
+        HOME_CSS
+        + f'<div class="lw-hero{" lw-hero-small" if small else ""}"><div class="lw-hero-frame">'
+        + f'<img src="{LOGO_HOME_URL}" alt="The Four Realms"></div>'
+        + f'<div class="lw-hero-sub"><span>✦</span>{escape(subtitle)}<span>✦</span></div></div>',
+        unsafe_allow_html=True,
+    )
 
 _lw_theme_previous_render_logo_header = render_logo_header
 
@@ -19425,17 +19441,7 @@ def render_logo_header(home):
     if not home:
         _lw_theme_previous_render_logo_header(home)
         return
-    title = image_base64(str(LOGO_TITLE)) or image_base64(str(LOGO_FULL))
-    logo = (
-        f'<img src="data:image/jpeg;base64,{title}" alt="The Four Realms">'
-        if title else '<h1 style="margin:.4rem 0">The Four Realms</h1>'
-    )
-    st.markdown(
-        HOME_CSS
-        + '<div class="lw-hero"><div class="lw-hero-frame">' + logo + "</div>"
-        + '<div class="lw-hero-sub"><span>✦</span>Menu principal<span>✦</span></div></div>',
-        unsafe_allow_html=True,
-    )
+    render_logo_hero("Menu principal")
 
 
 # Sections du menu principal, chacune rendue seule (sans enchaîner les autres).
@@ -19503,6 +19509,28 @@ def render_home_layout():
 
 
 _lw_pseudo_previous_render_home = render_home_layout
+
+
+# --- Salon d'attente en ligne : même affiche que le menu principal.
+
+_lw_theme_previous_render_online_lobby = render_online_lobby
+
+
+def render_online_lobby(room, seat):
+    st.markdown(CSS, unsafe_allow_html=True)
+    render_logo_hero("Partie en ligne", small=True)
+    original_markdown = st.markdown
+
+    def markdown(body, *args, **kwargs):
+        if "<h1" in str(body) and "Partie en ligne" in str(body):
+            return None  # remplacé par le sous-titre de l'affiche
+        return original_markdown(body, *args, **kwargs)
+
+    st.markdown = markdown
+    try:
+        _lw_theme_previous_render_online_lobby(room, seat)
+    finally:
+        st.markdown = original_markdown
 
 
 if __name__ == "__main__":
