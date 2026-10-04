@@ -17207,7 +17207,7 @@ def fx_describe(g, before, owner, label, turn, name, args, new_log):
         "spawns": [], "auras": [],
         # Qui frappe et qui est visé : « détruit par … » sur la case du mort.
         "actor_name": actors[0]["name"] if actors else None,
-        "actor_ids": [a["id"] for a in actors],
+        "actor_ids": [i for i in actor_ids if i in before],
         "target_name": targets[0]["name"] if targets else None,
     }
     result = fx_result_text(hits, owner)
@@ -18429,6 +18429,36 @@ def piece_range_text(name):
     return f"Tir à distance : {reach} case{'s' if reach > 1 else ''}" if reach > 0 else "Corps à corps"
 
 
+def building_summary(view, piece):
+    """Descriptif très court d'un bâtiment ou d'une base : à quoi il sert."""
+    owner = piece["owner"]
+    data = faction_of(view, owner)["buildings"].get(piece["name"], {})
+    parts = []
+    if piece["kind"] == "base":
+        parts.append(
+            "récolte l'or ou le mana grâce aux ouvriers posés sur les cases voisines"
+            if faction_id(view, owner) == DERNIERS_NES else "récolte l'or ou le mana des cases voisines"
+        )
+    recruits = []
+    for unit in data.get("units", []):
+        try:
+            batch = recruitment_batch(view, owner, unit)
+        except Exception:
+            batch = UNITS.get(unit, {}).get("batch", 1)
+        recruits.append(f"{batch} × {unit}" if batch and batch > 1 else unit)
+    if piece["kind"] == "base" and faction_id(view, owner) == DERNIERS_NES and WORKER not in data.get("units", []):
+        recruits.insert(0, WORKER)
+    if recruits:
+        parts.append("permet de recruter " + ", ".join(recruits))
+    upgrades = [name for name, up in UPGRADES.items() if up.get("building") == piece["name"] and up.get("owner") == faction_id(view, owner)]
+    if upgrades:
+        parts.append("vend les améliorations " + ", ".join(f"« {u} »" for u in upgrades))
+    if not parts:
+        parts.append("bâtiment de soutien")
+    text = " ; ".join(parts)
+    return text[0].upper() + text[1:] + "."
+
+
 def render_selected_card(g, view, piece=None, title="### 📋 Pièce sélectionnée",
                          empty="Clique sur une unité ou un bâtiment du plateau pour voir ses caractéristiques."):
     st.markdown(title)
@@ -18464,6 +18494,12 @@ def render_selected_card(g, view, piece=None, title="### 📋 Pièce sélectionn
                 pass
         lines.append(f"🦶 **Déplacement** : {move_text}")
         lines.append(f"🎯 **Portée** : {piece_range_text(piece['name'])}")
+        origin = [
+            name for name, data in faction_of(view, piece["owner"])["buildings"].items()
+            if piece["name"] in data.get("units", [])
+        ]
+        if origin:
+            lines.append("🏗️ **Recruté à** : " + ", ".join(origin))
         traits = []
         if is_flying(piece):
             traits.append("volant")
@@ -18474,10 +18510,8 @@ def render_selected_card(g, view, piece=None, title="### 📋 Pièce sélectionn
         bonus = UNIT_BONUS.get(piece["name"], [])
     else:
         kind = "Base" if piece["kind"] == "base" else "Bâtiment"
+        lines.insert(0, f"📖 **{piece['name']}** : {building_summary(view, piece)}")
         lines.append(f"🏠 **Type** : {kind}")
-        units = faction_of(view, piece["owner"])["buildings"].get(piece["name"], {}).get("units", [])
-        if units:
-            lines.append("🪖 **Produit** : " + ", ".join(units))
         if piece.get("wait"):
             lines.append(f"⏳ **Disponible dans** : {piece['wait']} fin(s) de tour")
         bonus = []
@@ -18759,39 +18793,35 @@ def render_phase_badge(g, view=None):
     # après les achats déjà planifiés).
     viewer = treasury_viewer(g)
     player = ((view or g).get("players") or g["players"])[viewer]
-    money = f" · 💰 {player['gold']} or · 🔮 {player['mana']} mana"
-    label = "🛠️ Phase de production" if g["phase"] == "build" else "⚔️ Phase de manœuvres"
-    # Faction qui doit jouer maintenant.
-    turn_owner = f"🎯 À jouer : {escape(faction_of(g, g['active'])['name'])}"
-    # Qui ouvrira la prochaine phase de manœuvres (le joueur 1 change à
-    # chaque tour) : celle de ce tour en production, celle du tour suivant
-    # pendant les manœuvres.
+    label = "Phase de production" if g["phase"] == "build" else "Phase de manœuvres"
+    # Qui ouvrira la prochaine phase de manœuvres (le joueur 1 du tour, qui
+    # change à chaque tour) : celle de ce tour en production, celle du tour
+    # suivant pendant les manœuvres.
     opener = g["first"] if g["phase"] == "build" else 1 - g["first"]
-    next_moves = f" · ⚔️ Prochaines manœuvres : {escape(faction_of(g, opener)['name'])} commence"
-    if g["phase"] == "build":
-        # Productions simultanées : le joueur 1 du tour est prioritaire.
-        turn_owner += (
-            f" · 👑 Joueur 1 : {escape(faction_of(g, g['first'])['name'])}"
-            f" · Joueur 2 : {escape(faction_of(g, 1 - g['first'])['name'])}"
-        )
+    next_moves = f"⚔️ Prochaine manœuvre : joueur 1 ({escape(faction_of(g, opener)['name'])})"
+    money = f"💰 Ressources : {player['gold']} or et {player['mana']} mana"
     # Bases ennemies détruites par ce joueur, et celles qui restent à abattre.
     destroyed = int(g["players"][viewer].get("bases", 0))
     if g.get("victory_mode") == "bases":
-        bases = f" · 🏰 {destroyed} détruite{'s' if destroyed > 1 else ''}, {max(0, 3 - destroyed)} à détruire"
+        bases = f"🏰 {destroyed} détruite{'s' if destroyed > 1 else ''}, {max(0, 3 - destroyed)} à détruire"
     else:
-        bases = f" · 🏰 {destroyed} base{'s' if destroyed > 1 else ''} détruite{'s' if destroyed > 1 else ''}"
+        bases = f"🏰 {destroyed} base{'s' if destroyed > 1 else ''} détruite{'s' if destroyed > 1 else ''}"
     clock, clock_css = "", ""
     if g.get("victory_mode") != "bases":
         # Chrono qui défile tout seul dans la page (sans rechargement).
         seconds = max(0, math.ceil(g.get("remaining", 0)))
         clock = f' · ⏱️ <span class="lw-clock" data-start="{seconds}">{seconds // 60:02d}:{seconds % 60:02d}</span>'
         clock_css = LW_CLOCK_CSS.replace("SECONDS", str(seconds))
+    lines = [f"Tour {g['turn']}, {label}", next_moves, money, bases + clock]
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
-            # Deux lignes : la phase et qui joue ; puis la suite et les ressources.
-            + f'<div class="lw-phase-badge"><span class="lw-badge-line">Tour {g["turn"]} · {label} · {turn_owner}</span>'
-            + f'<span class="lw-badge-line lw-badge-sub">{next_moves.removeprefix(" · ")}{money}{bases}{clock}</span></div>',
+            + '<div class="lw-phase-badge">'
+            + "".join(
+                f'<span class="lw-badge-line{"" if n == 0 else " lw-badge-sub"}">{line}</span>'
+                for n, line in enumerate(lines)
+            )
+            + "</div>",
             unsafe_allow_html=True,
         )
 
