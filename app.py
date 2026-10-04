@@ -19071,6 +19071,548 @@ def ai_production(draft, me, level):
 
 
 # ============================================================
+# IA : PLANS DE FACTION (niveaux Expert et Destructeur sanguinaire)
+# Chaque faction suit un plan de partie : ordre des bâtiments, unités
+# préférées, moment des changements d'âge, cases riches à occuper,
+# améliorations, fusions, placement des héros. Le plan oriente les choix
+# de l'IA (poids et priorités) sans remplacer son calcul des combats.
+# ============================================================
+
+AI_STRATEGY_LEVELS = {"expert", "sanguinaire"}
+AI_STRATEGY_DISABLED = set()   # sièges joués sans plan (tournois de réglage)
+AI_PLAN_OVERRIDE = {}          # siège -> plan imposé (tournois de réglage)
+_AI_PLAN_LEVEL = {}            # siège -> niveau, pendant le tour de l'IA
+
+# Déferlants : le rush (Mares et Déferlants à l'âge I) ou la technologie
+# (Aspergeurs et Rampants à l'âge II, Molosses à l'âge III), selon l'adversaire.
+AI_DEFERLANT_PLAN = {
+    EXILES: "deferlants_rush",
+    DERNIERS_NES: "deferlants_rush",
+    VAGABONDS: "deferlants_rush",
+}
+
+
+def ai_plan(g, me):
+    """Plan suivi par ce siège, ou None (niveaux inférieurs, réglages)."""
+    if me in AI_STRATEGY_DISABLED or _AI_PLAN_LEVEL.get(me) not in AI_STRATEGY_LEVELS:
+        return None
+    if me in AI_PLAN_OVERRIDE:
+        return AI_PLAN_OVERRIDE[me]
+    fid, opponent = faction_id(g, me), faction_id(g, 1 - me)
+    if fid == DEFERLANTS:
+        return AI_DEFERLANT_PLAN.get(opponent, "deferlants_tech")
+    return {EXILES: "exiles", DERNIERS_NES: "chevaliers", VAGABONDS: "vagabonds"}.get(fid)
+
+
+def ai_count(g, me, name):
+    return sum(e["owner"] == me and e["name"] == name for e in g["entities"])
+
+
+def ai_enemy_flyers(g, me):
+    """L'adversaire a des unités volantes (visibles)."""
+    return any(e["kind"] == "unit" and is_flying(e) for e in ai_enemy_pieces(g, me))
+
+
+def ai_enemy_invisible(g, me):
+    """L'adversaire aligne des unités invisibles : il faut des détecteurs."""
+    return any(
+        e["owner"] != me and e["kind"] == "unit" and (
+            e["name"] in INVISIBLE_UNITS
+            or (e["name"] == RAMPANT and e.get("planted"))
+            or (e["name"] == "Griffon" and owns_upgrade(g, e["owner"], "Invisibilité griffons"))
+        )
+        for e in g["entities"]
+    )
+
+
+def ai_rush_done(g, me):
+    """Rush des Déferlants terminé : stock de l'âge I presque épuisé, ou partie avancée."""
+    built = g["players"][me].get("units_built", {}).get("Déferlant", 0)
+    return built >= unit_limit(g, me, "Déferlant") - 2 or g["turn"] >= 9
+
+
+def ai_plan_phase(g, me, plan):
+    """Le rush laisse la place au plan technologique une fois terminé."""
+    if plan == "deferlants_rush" and (g["players"][me]["age"] >= 2 or ai_rush_done(g, me)):
+        return "deferlants_tech"
+    return plan
+
+
+# ------------------------------------------------------------
+# Unités préférées
+# ------------------------------------------------------------
+
+def ai_plan_unit_weight(g, me, plan, name):
+    plan = ai_plan_phase(g, me, plan)
+    age = g["players"][me]["age"]
+    opponent = faction_id(g, 1 - me)
+    if plan == "deferlants_rush":
+        return {"Déferlant": 6.0, "Kamikaze": 0.2}.get(name, 1.0)
+    if plan == "deferlants_tech":
+        if name == "Décimant":
+            # Détecteur : seulement contre des unités invisibles.
+            return 4.0 if ai_enemy_invisible(g, me) and ai_count(g, me, name) < 2 else 0.05
+        return {
+            "Aspergeur": 4.0, "Molosse": 5.0, "Costaud": 1.5, "Volant": 1.2,
+            "Déferlant": 0.6 if age >= 2 else 1.0, "Kamikaze": 0.2,
+        }.get(name, 1.0)
+    if plan == "exiles":
+        if opponent == DEFERLANTS:
+            # Face à la marée des Déferlants : des Tigres, beaucoup de Tigres.
+            return {
+                "Tigre des forêts": 5.0, "Réveil des morts": 0.4, "Gobelin": 0.1,
+                "Elfe": 1.5, "Mammouth dompté": 2.0, "Nain des montagnes": 1.5,
+            }.get(name, 1.0)
+        return {"Tigre des forêts": 1.5, "Gobelin": 0.2, "Mammouth dompté": 1.5}.get(name, 1.0)
+    if plan == "chevaliers":
+        if name == "Archer":
+            # Des Archers seulement contre des unités volantes.
+            return 2.5 if ai_enemy_flyers(g, me) else 0.02
+        return {
+            "Chevalier": 5.0, "Catapulte": 4.0, "Catapulte de l'enfer": 4.0,
+            "Griffon": 2.0, "Guerrier": 1.0, "Éclaireur": 0.3, "Dirigeable": 0.3,
+        }.get(name, 1.0)
+    if plan == "vagabonds":
+        if name == "Errant":
+            # 5 Errants fusionnent en Super Errant ; ensuite, 2 Errants font un Agile.
+            return 3.0 if ai_count(g, me, "Super Errant") == 0 and ai_count(g, me, "Errant") < 5 else 0.8
+        if name == "Ravageur":
+            # 4 Ravageurs fusionnent en Super Ravageur ; ensuite, 2 font un Barbare.
+            return 3.0 if ai_count(g, me, "Super Ravageur") == 0 and ai_count(g, me, "Ravageur") < 4 else 1.2
+        if name == "Voyant":
+            return 3.0 if ai_enemy_invisible(g, me) and ai_count(g, me, name) < 1 else 0.2
+        return {"Barbare": 6.0, "Agile": 4.0, "Sorcier": 0.3, "Destruction": 1.5}.get(name, 1.0)
+    return 1.0
+
+
+_lw_plan_previous_ai_unit_score = ai_unit_score
+
+
+def ai_unit_score(g, me, name, P, want_mana, boosted):
+    score = _lw_plan_previous_ai_unit_score(g, me, name, P, want_mana, boosted)
+    plan = ai_plan(g, me)
+    return score if plan is None else score * ai_plan_unit_weight(g, me, plan, name)
+
+
+# ------------------------------------------------------------
+# Bâtiments : ordre et nombre voulus (0 = à ne pas construire)
+# ------------------------------------------------------------
+
+def ai_plan_buildings(g, me, plan):
+    plan = ai_plan_phase(g, me, plan)
+    age = g["players"][me]["age"]
+    if plan == "deferlants_rush":
+        return [("Bassin de mutation", 1), ("Mare", 5)]
+    if plan == "deferlants_tech":
+        if age == 1:
+            return [("Mare", 1)]
+        nid = 1 if ai_enemy_invisible(g, me) else 0
+        if age == 2:
+            return [("Marais d'aspergeurs", 2), ("Galerie d'enragés", 1), ("Nid", 0)]
+        return [("Grotte à molosse", 2), ("Marais d'aspergeurs", 2), ("Nid", nid), ("Galerie d'enragés", 1)]
+    if plan == "exiles":
+        if faction_id(g, 1 - me) == DEFERLANTS:
+            return [("Marché", 1), ("Petite grotte", 3)]
+        return [("Petite grotte", 2)]
+    if plan == "chevaliers":
+        archers = 1 if ai_enemy_flyers(g, me) else 0
+        if age == 1:
+            return [("Caserne", 2), ("Forge", 1)]
+        # La 3e Caserne écoule l'or en Guerriers quand le mana manque.
+        if age == 2:
+            return [("Écurie", 2), ("Atelier de siège", 2), ("Caserne", 3), ("Archerie", archers)]
+        return [("Écurie", 2), ("Atelier de siège", 2), ("Réserve naturelle", 1), ("Caserne", 3),
+                ("Archerie", archers)]
+    return []
+
+
+AI_CLOSED_PLANS = {"deferlants_rush", "deferlants_tech", "chevaliers"}
+
+_lw_plan_previous_ai_wanted_buildings = ai_wanted_buildings
+
+
+def ai_wanted_buildings(g, me, P, goal=None, want_mana=False):
+    wanted = _lw_plan_previous_ai_wanted_buildings(g, me, P, goal, want_mana)
+    plan = ai_plan(g, me)
+    if plan is None:
+        return wanted
+    fid, age = faction_id(g, me), g["players"][me]["age"]
+    must = {AGE_PREREQUISITES.get((fid, age + 1)), TECH_BUILDINGS.get(fid)}
+    targets = ai_plan_buildings(g, me, plan)
+    first = [
+        name for name, target in targets
+        if target and building_is_available(g, me, name) and ai_count(g, me, name) < target
+    ]
+    capped = {name for name, target in targets if ai_count(g, me, name) >= target}
+    # Prérequis encore à bâtir, puis le plan ; les plans « fermés » ne
+    # construisent rien d'autre.
+    must = [n for n in wanted if n in must and not ai_count(g, me, n)]
+    if ai_plan_phase(g, me, plan) in AI_CLOSED_PLANS:
+        rest = []
+    else:
+        rest = [n for n in wanted if n not in capped]
+    return list(dict.fromkeys(must + first + rest))
+
+
+# Bâtiments clés de chaque plan : ils sortent tous au plus vite, sans garder
+# d'or pour les unités ni s'arrêter à 2 chantiers par tour.
+AI_PRIORITY_BUILDINGS = {
+    "deferlants_rush": {"Mare", "Bassin de mutation"},
+    "deferlants_tech": {"Marais d'aspergeurs", "Grotte à molosse"},
+    "exiles": {"Petite grotte", "Marché"},
+    "chevaliers": set(),
+}
+
+_lw_plan_previous_ai_try_build = ai_try_build
+
+
+def ai_try_build(g, me, name, P, floors, accelerated=False, keep=0):
+    global AI_BUILDS_PER_TURN
+    plan = ai_plan(g, me)
+    phase = ai_plan_phase(g, me, plan) if plan is not None else None
+    if name not in AI_PRIORITY_BUILDINGS.get(phase, ()):
+        return _lw_plan_previous_ai_try_build(g, me, name, P, floors, accelerated, keep)
+    saved = AI_BUILDS_PER_TURN
+    AI_BUILDS_PER_TURN = 8
+    try:
+        return _lw_plan_previous_ai_try_build(g, me, name, P, floors, accelerated, 0)
+    finally:
+        AI_BUILDS_PER_TURN = saved
+
+
+# ------------------------------------------------------------
+# Âges
+# ------------------------------------------------------------
+
+def ai_plan_age_turn(g, me, plan, age):
+    """Tour visé pour passer à l'âge « age » (None : réglage du niveau)."""
+    if plan == "deferlants_rush" and age == 2:
+        # On reste à l'âge I tant que le stock de Déferlants n'est pas épuisé.
+        return g["turn"] if ai_rush_done(g, me) else 99
+    if plan == "deferlants_tech":
+        return {2: 2, 3: 5}.get(age)
+    if plan == "vagabonds":
+        # Âge II tout de suite, âge III au plus tard au tour 5.
+        return {2: 2, 3: 4}.get(age)
+    if plan == "chevaliers":
+        return {2: 3}.get(age)
+    if plan == "exiles" and faction_id(g, 1 - me) == DEFERLANTS:
+        # Face au rush : des Tigres d'abord, l'âge II ensuite.
+        return {2: 6}.get(age)
+    return None
+
+
+_lw_plan_previous_ai_age_from = ai_age_from
+
+
+def ai_age_from(g, me, P):
+    turn = _lw_plan_previous_ai_age_from(g, me, P)
+    plan = ai_plan(g, me)
+    if plan is not None:
+        wanted = ai_plan_age_turn(g, me, plan, g["players"][me]["age"] + 1)
+        if wanted is not None:
+            turn = wanted
+    return turn
+
+
+# ------------------------------------------------------------
+# Cases riches (or ×3, mana ×2) : y installer des bases au plus tôt
+# ------------------------------------------------------------
+
+AI_RICH_CELLS = {("gold", 3), ("mana", 2)}
+AI_RICH_BONUS = 8.0
+
+
+def ai_plan_rich_bonus(plan):
+    return AI_RICH_BONUS if plan in ("deferlants_rush", "deferlants_tech", "exiles", "chevaliers") else 0.0
+
+
+def ai_rich_cell(g, q):
+    """Case riche : or ×3, mana ×2 ; tout le mana pour les Chevaliers (2 mana chacun)."""
+    resource = tuple(g["resources"].get(key(q), ("", 0)))
+    return resource in AI_RICH_CELLS or (g.get("_ai_all_mana") and resource[0] == "mana")
+
+
+_lw_plan_previous_ai_colony_value = ai_colony_value
+
+
+def ai_colony_value(g, p):
+    value = _lw_plan_previous_ai_colony_value(g, p)
+    bonus = g.get("_ai_rich_bonus", 0.0)
+    if bonus:
+        value += bonus * sum(
+            1 for q in neighbors(p)
+            if ai_rich_cell(g, q) and at(g, q) is None
+        )
+    return value
+
+
+_lw_plan_previous_ai_colonies_allowed = ai_colonies_allowed
+
+# Rush des Déferlants : 2 Incubateurs de plus (or ×3 et mana ×2), pas davantage.
+AI_RUSH_BASES = 6
+
+
+def ai_colonies_allowed(g, me, P):
+    allowed = _lw_plan_previous_ai_colonies_allowed(g, me, P)
+    plan = ai_plan(g, me)
+    if plan is not None and ai_plan_phase(g, me, plan) == "deferlants_rush":
+        bases = sum(e["owner"] == me and e["kind"] == "base" for e in g["entities"])
+        return 0 if bases >= AI_RUSH_BASES else max(allowed, 2)
+    if ai_plan(g, me) in ("deferlants_rush", "deferlants_tech", "exiles") and g["turn"] <= 2:
+        return max(allowed, 3)
+    return allowed
+
+
+# ------------------------------------------------------------
+# Améliorations
+# ------------------------------------------------------------
+
+_lw_plan_previous_ai_upgrade_value = ai_upgrade_value
+
+
+def ai_upgrade_value(g, me, name):
+    value = _lw_plan_previous_ai_upgrade_value(g, me, name)
+    plan = ai_plan(g, me)
+    if plan is None:
+        return value
+    plan = ai_plan_phase(g, me, plan)
+    if plan == "exiles" and faction_id(g, 1 - me) == DEFERLANTS:
+        if name == "Meute de tigres":
+            return 2600   # décisive : les Tigres piétinent les unités d'âge I
+        if name == "Vengeance":
+            return max(value, 900)
+        if name == "Instinct elfique":
+            return 0   # pas d'Elfes dans ce plan : l'or va aux Tigres
+    if plan == "deferlants_rush" and name in ("2 pattes en plus", "Dents acérées"):
+        return 2500
+    if plan == "deferlants_tech":
+        if name == "Rampants":
+            return 2400
+        if name == "Mutation kamikaze":
+            return 0
+    if plan == "vagabonds" and g["players"][me]["age"] == 2 and name in ("Mutation imminente", "Endurance"):
+        # L'âge III passe d'abord (tour 5 au plus tard) : ces améliorations
+        # attendent l'or qui reste, sans toucher à l'épargne de l'âge.
+        if g["turn"] >= (ai_plan_age_turn(g, me, plan, 3) or 99) - 1:
+            return min(value, AI_DECISIVE - 1)
+    if plan == "chevaliers":
+        if name == "Pierres enflammées" and (
+            ai_count(g, me, "Catapulte") + ai_count(g, me, "Catapulte de l'enfer")
+        ):
+            return 2300
+        if name == "Flèches enflammées" and not ai_count(g, me, "Archer"):
+            return 0
+    return value
+
+
+# ------------------------------------------------------------
+# Mutations (Aspergeur -> Rampant) et fusions des Vagabonds
+# ------------------------------------------------------------
+
+def ai_step_mutations(g, me, floors):
+    """Déferlants : la moitié des Aspergeurs deviennent des Rampants."""
+    if not owns_upgrade(g, me, "Rampants"):
+        return g
+    for unit in [e for e in g["entities"] if e["owner"] == me and e["name"] == "Aspergeur" and not e["wait"]]:
+        if ai_count(g, me, RAMPANT) >= ai_count(g, me, "Aspergeur"):
+            break
+        new = ai_try(g, mutate_unit, me, unit["id"])
+        if new is not None and ai_within(new, me, floors):
+            g = new
+    return g
+
+
+AI_VAGABOND_FUSIONS = ["Super Ravageur", "Super Errant", "Barbare", "Agile"]
+
+_lw_plan_previous_ai_step_fusions = ai_step_fusions
+
+
+def ai_step_fusions(g, me, P, floors, want_mana):
+    plan = ai_plan(g, me)
+    if plan is not None and ai_plan_phase(g, me, plan) == "deferlants_tech":
+        return ai_step_mutations(g, me, floors)
+    if plan != "vagabonds":
+        return _lw_plan_previous_ai_step_fusions(g, me, P, floors, want_mana)
+    # Super Ravageur et Super Errant d'abord, puis Barbares et Agiles.
+    for result in AI_VAGABOND_FUSIONS:
+        data = FUSIONS[result]
+        if data["age"] > g["players"][me]["age"] or ai_count(g, me, result) >= unit_limit(g, me, result):
+            continue
+        pool = {}
+        for e in g["entities"]:
+            if e["owner"] == me and e["kind"] == "unit" and e["name"] in data["parts"] and not e["wait"]:
+                pool.setdefault(e["name"], []).append(e)
+        if any(len(pool.get(n, [])) < k for n, k in data["parts"].items()):
+            continue
+        ids = [u["id"] for n, k in data["parts"].items() for u in pool[n][:k]]
+        first = entity(g, ids[0])
+        for pos in [tuple(first["pos"])] + list(neighbors(tuple(first["pos"]))):
+            new = ai_try(g, fuse_spirits, me, result, ids, pos)
+            if new is not None and ai_within(new, me, floors):
+                g = new
+                break
+    return g
+
+
+# ------------------------------------------------------------
+# Héros vagabonds : au front quand il n'y a aucun risque, en retrait sinon
+# ------------------------------------------------------------
+
+AI_HERO_FORWARD = 70.0   # or (équivalent) par case gagnée vers l'ennemi
+AI_HERO_MIN_GAP = 3      # cases gardées entre un héros et les bases ennemies
+
+
+def ai_move_heroes_front(g, me):
+    """Le marqueur garde la dernière ressource traversée : avancer ne coûte
+    pas la récolte. Sans aucun risque (aucune unité ennemie ne peut atteindre
+    la case), le héros avance pour produire ses unités près de l'ennemi ;
+    au moindre risque, il recule vers une case sûre."""
+    need_mana = g["players"][me]["age"] < 3 or ai_mana(g, me) < 6 or ai_gold(g, me) > 1500
+    heroes = sorted(
+        (e for e in g["entities"] if e["owner"] == me and is_hero(e)),
+        key=lambda h: (-hero_stats(g, h)[3], h["id"]),
+    )
+    taken = {}
+    for h in heroes:
+        if h.get("marker"):
+            taken.setdefault(key(tuple(h["marker"])), h["id"])
+    targets = [
+        tuple(e["pos"]) for e in ai_enemy_pieces(g, me) if e["kind"] in ("base", "building")
+    ]
+
+    def front(p):
+        return min((distance(p, q) for q in targets), default=0)
+
+    for hero in heroes:
+        current = entity(g, hero["id"])
+        options = [tuple(p) for p in hero_destinations(g, current)]
+        if not options:
+            continue
+        others = {k for k, hid in taken.items() if hid != current["id"]}
+
+        def value_of(cell):
+            if cell is None or key(tuple(cell)) in others:
+                return 0.0
+            return ai_marker_value(g, me, current, cell, need_mana)
+
+        _, routes = hero_paths(g, current)
+
+        def after_move(p):
+            crossed = [q for q in routes.get(p, [])[1:] if key(q) in g["resources"]]
+            return crossed[-1] if crossed else current.get("marker")
+
+        here = tuple(current["pos"])
+        danger = {p: ai_hero_danger(g, me, p) for p in options + [here]}
+        here_value = value_of(current.get("marker"))
+        target = None
+        if danger[here] > 0:
+            calm = [p for p in options if danger[p] == 0]
+            if calm:
+                target = max(calm, key=lambda p: (value_of(after_move(p)), front(p), p))
+            else:
+                target = min(options, key=lambda p: (danger[p], -front(p), p))
+        else:
+            def score(p):
+                return value_of(after_move(p)) + AI_HERO_FORWARD * (front(here) - front(p))
+
+            calm = [p for p in options if danger[p] == 0 and front(p) >= AI_HERO_MIN_GAP]
+            best = max(calm, key=lambda p: (score(p), p), default=None)
+            if best is not None and score(best) > here_value + 20:
+                target = best
+        if target is None or target == here:
+            continue
+        new = ai_try(g, move_hero, me, current["id"], target)
+        if new is None:
+            continue
+        g = new
+        moved = entity(g, hero["id"])
+        for k, hid in list(taken.items()):
+            if hid == hero["id"]:
+                del taken[k]
+        if moved.get("marker"):
+            taken.setdefault(key(tuple(moved["marker"])), hero["id"])
+    return g
+
+
+_lw_plan_previous_ai_move_heroes = ai_move_heroes
+
+
+def ai_move_heroes(g, me, careful=False):
+    if ai_plan(g, me) == "vagabonds":
+        return ai_move_heroes_front(g, me)
+    return _lw_plan_previous_ai_move_heroes(g, me, careful)
+
+
+# ------------------------------------------------------------
+# Production : le plan connaît le niveau joué
+# ------------------------------------------------------------
+
+_lw_plan_previous_ai_production = ai_production
+
+
+def ai_production(draft, me, level):
+    _AI_PLAN_LEVEL[me] = level
+    plan = ai_plan(draft, me)
+    draft["_ai_rich_bonus"] = ai_plan_rich_bonus(ai_plan_phase(draft, me, plan)) if plan else 0.0
+    draft["_ai_all_mana"] = plan == "chevaliers"
+    try:
+        return _lw_plan_previous_ai_production(draft, me, level)
+    finally:
+        draft.pop("_ai_rich_bonus", None)
+        draft.pop("_ai_all_mana", None)
+        _AI_PLAN_LEVEL.pop(me, None)
+
+
+# ------------------------------------------------------------
+# Manœuvres : les Rampants se plantent pour tirer
+# ------------------------------------------------------------
+
+AI_RAMPANT_RANGE = 3
+
+
+def ai_rampant_step(bundle, me):
+    """Rampant non planté à portée d'un ennemi : il se plante (invisible, il
+    tirera à sa prochaine activation). Planté sans ennemi en vue : il ressort
+    pour avancer."""
+    g = bundle["game"]
+    enemies = [
+        tuple(e["pos"]) for e in ai_enemy_pieces(g, me)
+        if not (e["kind"] == "unit" and is_flying(e))
+    ]
+    if not enemies:
+        return False
+    for unit in g["entities"]:
+        if unit["owner"] != me or unit["name"] != RAMPANT or not can_move(g, unit):
+            continue
+        gap = min(distance(tuple(unit["pos"]), p) for p in enemies)
+        if not unit.get("planted") and gap <= AI_RAMPANT_RANGE:
+            fn = plant_rampant
+        elif unit.get("planted") and gap > AI_RAMPANT_RANGE + 4:
+            fn = unplant_rampant
+        else:
+            continue
+        after = ai_simulate(g, fn, unit["id"])
+        if after is not None:
+            bundle["game"] = ai_restore_log(g, after)
+            return True
+    return False
+
+
+_lw_plan_previous_ai_move_step = ai_move_step
+
+
+def ai_move_step(bundle, me, level):
+    _AI_PLAN_LEVEL[me] = level
+    try:
+        if ai_plan(bundle["game"], me) is not None and ai_rampant_step(bundle, me):
+            return True
+        return _lw_plan_previous_ai_move_step(bundle, me, level)
+    finally:
+        _AI_PLAN_LEVEL.pop(me, None)
+
+
+# ============================================================
 # PSEUDO OBLIGATOIRE
 # Sans pseudo, impossible de lancer, charger ou rejoindre une partie.
 # ============================================================
