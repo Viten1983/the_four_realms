@@ -5966,9 +5966,6 @@ def main():
                 g, view, 1600, 1000, 32, 40
             )
   
-    with st.container(key="lw_page_combat_report"):  
-        render_last_combat()  
-  
     with st.container(key="lw_page_log"):  
         render_log(view)  
   
@@ -17717,10 +17714,9 @@ def render_board(g, view, readonly=False):
         bundle = room.get("bundle") or bundle
     viewer = fx_viewer(bundle, g)
     recent = fx_recent(g, viewer)
-    with st.expander("📜 Journal de la partie (détaillé)"):
-        for line in reversed(g.get("log", [])):
-            st.text(line)
     render_journal(bundle, g, viewer, recent)
+    # Bilan du dernier combat : juste sous le journal de bord.
+    render_last_combat()
     render_phase_badge(g, view)
     # Grande annonce de la phase sur le plateau (2 secondes, une fois par phase).
     st.session_state["_lw_phase_banner"] = None if g.get("winner") is not None else {
