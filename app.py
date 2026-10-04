@@ -5282,10 +5282,12 @@ def render_move_controls(g):
                     "ajoute suffisamment d'unités au groupe."  
                 )  
   
-                valid = st.checkbox(  
-                    "Je confirme vouloir sacrifier toutes ces unités.",  
-                    key=f"{prefix}_sacrifice_{target['id']}",  
-                )  
+                # Juste au-dessus de « Confirmer l'attaque », en haut du menu.
+                with sidebar_slot("attack"):
+                    valid = st.checkbox(
+                        "⚠️ Je confirme vouloir sacrifier toutes ces unités.",
+                        key=f"{prefix}_sacrifice_{target['id']}",
+                    )
   
             else:  
                 total_losses = values["losses"]  
