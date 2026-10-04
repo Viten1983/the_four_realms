@@ -1430,9 +1430,28 @@
     }
 
     let announceUntil = 0;  // fin de l'annonce de phase en cours
+    let pendingAnnounce = null;  // annonce qui attend la fin de la phase précédente
+
+    // Action de la phase qui se termine (ex. derniers déplacements de l'IA
+    // avant la production) : elle se joue AVANT l'annonce de la phase suivante.
+    function previousPhaseEvent(ev, info) {
+      if (!ev || !ev.phase || ev.round === undefined || ev.round === null) return false;
+      return Number(ev.round) !== Number(info.turn) || ev.phase !== info.phase;
+    }
+
+    function maybeAnnounce() {
+      if (!pendingAnnounce || fxBusy) return;
+      if (fxQueue.length && previousPhaseEvent(fxQueue[0], pendingAnnounce)) return;
+      const info = pendingAnnounce;
+      pendingAnnounce = null;
+      showPhaseAnnounce(info);
+    }
+
     function pumpFx() {
       if (fxBusy) return;
-      // L'annonce de phase d'abord : les manœuvres se jouent après elle.
+      // Annonce de la nouvelle phase dès que la phase précédente est jouée ;
+      // les actions de la nouvelle phase se jouent après elle.
+      maybeAnnounce();
       const wait = announceUntil - performance.now();
       if (wait > 0) { setTimeout(pumpFx, wait + 60); return; }
       const ev = fxQueue.shift();
@@ -1478,6 +1497,7 @@
         board.appendChild(fxLayer);
         setTimeout(pumpFx, 300);
       }
+      maybeAnnounce();
     }
 
     // Coût de la construction ou du recrutement sur chaque case de placement
@@ -1630,6 +1650,11 @@
       const id = `phase:${info.key}`;
       if (playedFx.has(id)) return;
       rememberFx(id);
+      // Affichée par maybeAnnounce(), après les actions de la phase précédente.
+      pendingAnnounce = info;
+    }
+
+    function showPhaseAnnounce(info) {
       announceUntil = performance.now() + 2250;
       lockPageDuring(2250);
       const layer = svgNode("g", { "pointer-events": "none" });
@@ -1897,6 +1922,7 @@ if (reachable || placed) {
         drawNotice();
         animateLastMove();
         queueFx();
+        maybeAnnounce();
       }
       wrapper.scrollLeft = previousScrollLeft;
       wrapper.scrollTop = previousScrollTop;

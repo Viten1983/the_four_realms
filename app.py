@@ -17552,6 +17552,7 @@ def fx_board_payload(bundle, g, viewer, recent):
             "hits": e.get("hits", []), "spawns": e.get("spawns", []),
             "auras": e.get("auras", []), "text": e.get("text", ""),
             "dealt": e.get("dealt"), "target_id": e.get("target_id"),
+            "round": e.get("round"), "phase": e.get("phase"),
         })
     game_id = (bundle or {}).get("game_id") or (bundle or {}).get("code") or ""
     return {
@@ -17711,6 +17712,7 @@ def render_board(g, view, readonly=False):
         "key": f"{(bundle or {}).get('game_id') or ''}:{g['turn']}:{g['phase']}",
         "text": ("🛠️ Phase de production" if g["phase"] == "build" else "⚔️ Phase de manœuvres"),
         "turn": g["turn"],
+        "phase": g["phase"],
     }
     payload = fx_board_payload(bundle, g, viewer, recent)
     st.session_state["_lw_fx"] = payload if recent or payload["deaths"] or payload["harvest"] else None
@@ -18732,6 +18734,8 @@ def render_phase_badge(g, view=None):
     player = ((view or g).get("players") or g["players"])[viewer]
     money = f" · 💰 {player['gold']} or · 🔮 {player['mana']} mana"
     label = "🛠️ Phase de production" if g["phase"] == "build" else "⚔️ Phase de manœuvres"
+    # Faction qui doit jouer maintenant.
+    turn_owner = f"🎯 À jouer : {escape(faction_of(g, g['active'])['name'])}"
     # Bases ennemies détruites par ce joueur, et celles qui restent à abattre.
     destroyed = int(g["players"][viewer].get("bases", 0))
     if g.get("victory_mode") == "bases":
@@ -18747,7 +18751,7 @@ def render_phase_badge(g, view=None):
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
-            + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label}{money}{bases}{clock}</div>',
+            + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label} · {turn_owner}{money}{bases}{clock}</div>',
             unsafe_allow_html=True,
         )
 
