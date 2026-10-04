@@ -617,6 +617,8 @@
         addText(group, x, y + 19, "⚔ A FRAPPÉ", 7, "#7f1d1d");
       } else if (piece.wait > 0) {
         addText(group, x, y + 19, `ATTENTE ${piece.wait}`, 7, "#061411");
+      } else if (piece.reload > 0) {
+        addText(group, x, y + 19, `RECHARGE ${piece.reload}`, 7, "#7f1d1d");
       } else if (piece.planted) {
         addText(group, x, y + 19, "PLANTÉ", 7, "#061411");
       } else if (piece.blocked) {
@@ -697,6 +699,7 @@
       let status = null;
       if (piece.frozen_until_turn && piece.frozen_until_turn >= args.turn) status = "❄ GELÉ";
       else if (piece.wait > 0) status = `ATTENTE ${piece.wait}`;
+      else if (piece.reload > 0) status = `RECHARGE ${piece.reload}`;
       else if (piece.blocked) status = "BLOQUÉ";
       if (status) whiteText(group, x + 5, y + H - 21, status, 7.5);
     }
@@ -747,6 +750,7 @@
       if (piece.frozen_until_turn && piece.frozen_until_turn >= args.turn) status = "❄ GELÉ";
       else if (piece.invisible && !piece.planted) status = "👻 INVISIBLE";
       else if (piece.wait > 0) status = `ATTENTE ${piece.wait}`;
+      else if (piece.reload > 0) status = `RECHARGE ${piece.reload}`;
       else if (piece.planted) status = "PLANTÉ";
       else if (piece.blocked) status = "BLOQUÉ";
       else if (piece.cargo && piece.cargo.length) status = `${piece.cargo.length} À BORD`;

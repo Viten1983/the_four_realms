@@ -4441,7 +4441,10 @@ def render_board(g, view, readonly=False):
         )
         piece_data["pos"] = list(piece["pos"])
         piece_data["status"] = piece_status(piece)
-        piece_data["dimmed"] = bool(piece.get("wait") or piece.get("acted") or piece.get("used"))
+        # Engin de siège qui recharge après un tir : grisé, « RECHARGE N ».
+        reload = max(0, int(piece.get("siege_ready_turn", 0) or 0) - int(view["turn"]))
+        piece_data["reload"] = reload
+        piece_data["dimmed"] = bool(piece.get("wait") or piece.get("acted") or piece.get("used") or reload)
         piece_data["blocked"] = production_blocked_until(view, piece) is not None
         piece_data["stack"] = len(pieces_at(view, piece["pos"]))
         piece_data["faction"] = faction_id(view, piece["owner"])
@@ -13092,6 +13095,8 @@ def trebuchet_auto_fire(g, mover, route):
             return
         if treb["wait"] or treb.get("auto_fired_turn") == g["turn"]:
             continue
+        if g["turn"] < treb.get("siege_ready_turn", 0):
+            continue  # en rechargement après un tir (manuel ou automatique)
         if not visible_to_player(g, mover, treb["owner"]):
             continue
         low, high = SIEGE_RANGES[TREBUCHET]
@@ -13100,6 +13105,8 @@ def trebuchet_auto_fire(g, mover, route):
             continue
 
         treb["auto_fired_turn"] = g["turn"]
+        # Comme un tir manuel : le Trébuchet recharge pendant 2 tours.
+        treb["siege_ready_turn"] = g["turn"] + SIEGE_RELOAD_TURNS
         target_pos = tuple(mover["pos"])
         report = {
             "turn": turn_label(g), "position": coord(target_pos),
