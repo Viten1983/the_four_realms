@@ -20143,15 +20143,10 @@ HOME_CSS = """
 .stApp .block-container { max-width: 1180px !important; padding-top: 2.2rem !important; }
 .lw-hero { text-align: center; margin: -1rem auto 1.6rem; max-width: 100%; }
 .lw-hero-small { max-width: 100%; }
+/* L'affiche a son propre cadre doré : pas de second cadre autour. */
 .lw-hero-frame {
-    position: relative; padding: 6px;
-    background: #000;
-    border: 1px solid #a07c3a; border-radius: 4px;
-    box-shadow: inset 0 0 0 4px #0d0906, inset 0 0 0 5px rgba(217, 180, 95, 0.45),
-                0 0 60px rgba(217, 160, 70, 0.22), 0 18px 50px rgba(0, 0, 0, 0.75);
-}
-.lw-hero-frame::before {
-    content: ""; position: absolute; inset: 3px; pointer-events: none; background: CORNERS;
+    position: relative; padding: 0; background: transparent; border: none;
+    box-shadow: 0 0 60px rgba(217, 160, 70, 0.22), 0 18px 50px rgba(0, 0, 0, 0.75);
 }
 .lw-hero-frame img { width: 100% !important; max-width: none !important; height: auto; display: block; border-radius: 2px;
     max-height: none !important; object-fit: cover !important; }
