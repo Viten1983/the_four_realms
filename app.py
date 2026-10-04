@@ -5421,12 +5421,15 @@ def render_move_controls(g):
                 "y compris les survivants qui restent sur place."  
             )  
   
-            if st.button(  
-                "⚔️ Confirmer l’attaque du groupe",  
-                type="primary",  
-                disabled=not valid,  
-                key=f"{prefix}_attack_{target['id']}",  
-            ):  
+            with sidebar_slot("attack"):
+                confirm = st.button(
+                    "⚔️ Confirmer l’attaque",
+                    type="primary",
+                    disabled=not valid,
+                    width="stretch",
+                    key=f"{prefix}_attack_{target['id']}",
+                )
+            if confirm:
                 perform(  
                     game_action,  
                     attack,  
@@ -5436,7 +5439,7 @@ def render_move_controls(g):
                     losses,  
                 )  
   
-    # Fin des manœuvres : bouton rouge « Terminer mes manœuvres » du menu.
+    # Fin des manœuvres : bouton rouge « Terminer toutes mes manœuvres » du menu.
 # ============================================================
 # SCORES ET APPLICATION
 # ============================================================
@@ -5762,7 +5765,7 @@ def render_sidebar(bundle):
             elif g["phase"] == "move":  
                 # Ce bouton ne dépend pas de la sélection d'une unité.  
                 if st.button(  
-                    "🏁 Terminer mes manœuvres",  
+                    "🏁 Terminer toutes mes manœuvres",  
                     key="sidebar_finish_maneuvers_always",  
                     disabled=(  
                         g["curtain"]  
@@ -6625,13 +6628,16 @@ def render_move_controls(g):
             "et termine l'activation."  
         )  
   
-        if st.button(  
-            "✓ Terminer l’activation de cette unité",  
-            key=(  
-                f"finish_unit_activation_"  
-                f"{g['turn']}_{moving_unit['id']}"  
-            ),  
-        ):  
+        with sidebar_slot("activation"):
+            finish = st.button(
+                "✓ Terminer l’activation de cette unité",
+                width="stretch",
+                key=(
+                    f"finish_unit_activation_"
+                    f"{g['turn']}_{moving_unit['id']}"
+                ),
+            )
+        if finish:
             perform(  
                 game_action,  
                 finish_unit_activation,  
@@ -18477,6 +18483,18 @@ def can_pay(view, owner, gold, mana=0):
     return player["gold"] >= gold and player["mana"] >= mana
 
 
+# Emplacements réservés dans le menu de gauche : des boutons dessinés plus
+# loin (attaque, fin d'activation) y apparaissent, au bon endroit.
+import contextlib
+
+_LW_SIDEBAR_SLOTS = {}
+
+
+def sidebar_slot(name):
+    slot = _LW_SIDEBAR_SLOTS.get(name)
+    return slot if slot is not None else contextlib.nullcontext()
+
+
 SIDEBAR_CSS = """
 <style>
 /* Rubriques du menu de gauche */
@@ -18605,6 +18623,11 @@ def render_sidebar(bundle):
                 # Partie terminée : retour direct à l'accueil.
                 if st.button("🏠 Retour à l'accueil", type="primary", width="stretch", key="end_go_home"):
                     go_home_now()
+            # Manœuvres : « Terminer l'activation » (jaune) juste au-dessus de
+            # « Terminer toutes mes manœuvres », « Confirmer l'attaque » juste en dessous.
+            maneuvers = g["winner"] is None and g["phase"] == "move"
+            if maneuvers:
+                _LW_SIDEBAR_SLOTS["activation"] = st.container(key="lw_activation_slot")
             # Terminer la phase : même place, en rouge, en production comme en manœuvres.
             with st.container(key="lw_end_phase"):
                 if g["winner"] is not None:
@@ -18619,18 +18642,23 @@ def render_sidebar(bundle):
                         perform(commit_plan)
                 else:
                     if st.button(
-                        "🏁 Terminer mes manœuvres",
+                        "🏁 Terminer toutes mes manœuvres",
                         disabled=g["winner"] is not None or g["curtain"] or g["active"] in g["passed"],
                         width="stretch",
                         key="sidebar_finish_maneuvers_always",
                     ):
                         perform(game_action, pass_turn)
-            if g["winner"] is None:
-                if g["phase"] == "build":
-                    render_build_controls(g, view, local=True, on_board=False)
-                elif g["phase"] == "move":
-                    render_movement_validation(g)
-                    render_move_controls(g)
+            if maneuvers:
+                _LW_SIDEBAR_SLOTS["attack"] = st.container(key="lw_attack_slot")
+            try:
+                if g["winner"] is None:
+                    if g["phase"] == "build":
+                        render_build_controls(g, view, local=True, on_board=False)
+                    elif g["phase"] == "move":
+                        render_movement_validation(g)
+                        render_move_controls(g)
+            finally:
+                _LW_SIDEBAR_SLOTS.clear()
 
         # 3. Pièce sélectionnée
         with st.container(border=True, key="lw_side_unit"):
@@ -19440,6 +19468,22 @@ section[data-testid="stSidebar"] [class*="_choose_"] button[data-testid="stBaseB
 section[data-testid="stSidebar"] [class*="_choose_"] button p,
 section[data-testid="stSidebar"] [class*="_upgrade_"] button p,
 section[data-testid="stSidebar"] [class*="_advance_age_"] button p { color: inherit !important; }
+
+/* Terminer l'activation de l'unité : jaune, juste au-dessus. */
+.stApp section[data-testid="stSidebar"] .st-key-lw_activation_slot button[data-testid] {
+    background: linear-gradient(180deg, #ffe680 0%, #f2c230 50%, #c99512 100%) !important;
+    border: 1px solid #fff2b0 !important;
+    color: #2a1c02 !important;
+    font-family: "Cinzel", Georgia, serif !important;
+    font-weight: 800 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 -2px 0 rgba(120, 80, 0, 0.45),
+                0 0 0 1px #5a3c00, 0 0 12px rgba(242, 194, 48, 0.4), 0 3px 8px rgba(0, 0, 0, 0.55) !important;
+    text-shadow: 0 1px 0 rgba(255, 245, 200, 0.7) !important;
+}
+.stApp section[data-testid="stSidebar"] .st-key-lw_activation_slot button[data-testid]:hover:not(:disabled) {
+    filter: brightness(1.08) !important;
+}
+.stApp section[data-testid="stSidebar"] .st-key-lw_activation_slot button p { color: inherit !important; }
 
 /* Terminer la phase : sceau rouge, toujours au même endroit. */
 .stApp section[data-testid="stSidebar"] .st-key-lw_end_phase button[data-testid] {
