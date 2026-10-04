@@ -3880,14 +3880,18 @@ def render_ranged_controls(g, attacker, target):
             + ranged_riposte_text(g, attacker, target)    
         )  
   
-        if st.button(  
-            "🎯 Confirmer le tir",  
-            type="primary",  
-            key=(  
-                f"shoot_{g['turn']}_{g['active']}_"  
-                f"{attacker['id']}_{target['id']}"  
-            ),  
-        ):  
+        # Au même endroit que « Confirmer l'attaque » (corps à corps).
+        with sidebar_slot("attack"):
+            shoot = st.button(
+                "🎯 Confirmer le tir",
+                type="primary",
+                width="stretch",
+                key=(
+                    f"shoot_{g['turn']}_{g['active']}_"
+                    f"{attacker['id']}_{target['id']}"
+                ),
+            )
+        if shoot:
             perform(  
                 game_action,  
                 ranged_attack,  
@@ -6369,16 +6373,18 @@ def render_mage_controls(g, mage):
         f"{st.session_state.ui_revision}"  
     )  
   
-    spell = st.radio(  
-        "Sort",  
-        options=["slow", "damage"],  
-        format_func=lambda value: (  
-            "Ralentissement : −2 MVT, jusqu'à 3 unités"  
-            if value == "slow"  
-            else "Dégâts : −2 PF, jusqu'à 2 unités"  
-        ),  
-        key=f"{prefix}_spell",  
-    )  
+    # Le choix du sort survit aux clics sur le plateau (sinon il revenait au
+    # premier sort à chaque cible cliquée).
+    spell = st.radio(
+        "Sort",
+        options=["damage", "slow"],
+        format_func=lambda value: (
+            "Ralentissement : −2 MVT, jusqu'à 3 unités"
+            if value == "slow"
+            else "Dégâts : −2 PF, jusqu'à 2 unités"
+        ),
+        key=f"mage_spell_{g['turn']}_{mage['id']}",
+    )
   
     candidates = {  
         piece["id"]: piece  
@@ -7981,11 +7987,14 @@ def render_kamikaze_controls(g, unit, target, prefix):
         + ". Le Kamikaze est détruit."
     )
 
-    if st.button(
-        "💥 Confirmer l'explosion",
-        type="primary",
-        key=f"{prefix}_kamikaze_{target['id']}",
-    ):
+    with sidebar_slot("attack"):
+        explode = st.button(
+            "💥 Confirmer l'explosion",
+            type="primary",
+            width="stretch",
+            key=f"{prefix}_kamikaze_{target['id']}",
+        )
+    if explode:
         perform(game_action, attack, [unit["id"]], target["id"])
 
 
@@ -18648,7 +18657,17 @@ def render_sidebar(bundle):
                     ):
                         perform(game_action, pass_turn)
             if maneuvers:
+                # Encarts d'information (violets), puis les confirmations.
+                _LW_SIDEBAR_SLOTS["info"] = st.container(key="lw_info_slot")
                 _LW_SIDEBAR_SLOTS["attack"] = st.container(key="lw_attack_slot")
+            original_info = st.info
+
+            def info_in_slot(*args, **kwargs):
+                with sidebar_slot("info"):
+                    return original_info(*args, **kwargs)
+
+            if maneuvers:
+                st.info = info_in_slot
             try:
                 if g["winner"] is None:
                     if g["phase"] == "build":
@@ -18657,6 +18676,7 @@ def render_sidebar(bundle):
                         render_movement_validation(g)
                         render_move_controls(g)
             finally:
+                st.info = original_info
                 _LW_SIDEBAR_SLOTS.clear()
 
         # 3. Pièce sélectionnée
