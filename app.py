@@ -17205,6 +17205,10 @@ def fx_describe(g, before, owner, label, turn, name, args, new_log):
         "turn": label, "round": turn, "owner": owner, "phase": "move",
         "kind": "info", "text": "", "shots": [], "moves": [], "hits": hits,
         "spawns": [], "auras": [],
+        # Qui frappe et qui est visé : « détruit par … » sur la case du mort.
+        "actor_name": actors[0]["name"] if actors else None,
+        "actor_ids": [a["id"] for a in actors],
+        "target_name": targets[0]["name"] if targets else None,
     }
     result = fx_result_text(hits, owner)
     spell = args[1] if len(args) > 1 and isinstance(args[1], str) else None
@@ -17460,6 +17464,7 @@ def fx_production_entries(g, before, players_before, hero_orders, label, turn):
                 "turn": label, "round": turn, "owner": owner, "phase": "build",
                 "kind": kind, "icon": FX_ICONS[kind],
                 "text": f"{hero_name} ({coord(hero_pos)}) frappe {hit['name']} en {coord(hit['pos'])} → {fx_hit_text(hit)}",
+                "actor_name": hero_name,
                 "shots": [{"from": hero_pos, "to": hit["pos"], "kind": kind}],
                 "moves": [], "hits": [hit], "spawns": [], "auras": [],
             })
@@ -17562,7 +17567,7 @@ def fx_board_payload(bundle, g, viewer, recent):
     game_id = (bundle or {}).get("game_id") or (bundle or {}).get("code") or ""
     return {
         "events": events, "viewer": viewer, "game": str(game_id),
-        "deaths": fx_deaths(g),
+        "deaths": fx_deaths(g, recent),
         "harvest": fx_harvest(g, viewer),
     }
 
@@ -17584,21 +17589,27 @@ def fx_phase_index(round_number, phase):
     return 2 * int(round_number) + (1 if phase == "move" else 0)
 
 
-def fx_deaths(g):
-    """Case(s) où une pièce est morte lors du DERNIER combat seulement
-    (une seule case rouge avec sa croix), effacée dès le nouveau tour."""
-    for e in reversed(g.get("journal") or []):
+def fx_deaths(g, recent=None):
+    """Cases où une pièce est morte depuis la dernière manœuvre du joueur de
+    cet écran (elle comprise) : case rouge, croix, la pièce détruite et son
+    tueur. Effacées dès sa manœuvre suivante, et au nouveau tour."""
+    deaths, seen = [], set()
+    for e in reversed(recent if recent is not None else (g.get("journal") or [])[-1:]):
         if int(e.get("round", 0)) != int(g["turn"]):
-            break
-        # La cible abattue d'abord ; l'attaquant tué en riposte sinon.
-        dead = sorted(
-            (hit for hit in e.get("hits") or [] if hit.get("destroyed")),
-            key=lambda hit: bool(hit.get("attacker")),
-        )
-        if dead:
-            return [{"pos": dead[0]["pos"], "seq": e["seq"]}]
-    return []
-
+            continue
+        actor_ids = set(e.get("actor_ids") or [])
+        for hit in e.get("hits") or []:
+            if not hit.get("destroyed"):
+                continue
+            cell = tuple(hit["pos"])
+            if cell in seen:
+                continue
+            seen.add(cell)
+            # Attaquant tué en riposte : tué par sa cible.
+            riposte = hit.get("attacker") or hit.get("id") in actor_ids
+            killer = e.get("target_name") if riposte else e.get("actor_name")
+            deaths.append({"pos": hit["pos"], "seq": e["seq"], "name": hit["name"], "killer": killer})
+    return deaths
 
 def fx_color_pf(text, css):
     """Met en couleur les « −N PF », « +N PF » et « détruit » d'un texte."""
@@ -18725,7 +18736,7 @@ div:has(> .st-key-lw_phase_badge) {
     display: inline-block;
     margin: 8px 0 0 10px;
     padding: 4px 14px;
-    border-radius: 999px;
+    border-radius: 14px;
     background: rgba(15, 23, 42, 0.62);
     color: #ffffff;
     font-weight: 800;
@@ -18735,6 +18746,8 @@ div:has(> .st-key-lw_phase_badge) {
     pointer-events: none;
     white-space: nowrap;
 }
+.lw-badge-line { display: block; line-height: 1.45; }
+.lw-badge-sub { font-size: 12.5px; opacity: 0.92; }
 </style>
 """
 
@@ -18776,7 +18789,9 @@ def render_phase_badge(g, view=None):
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
-            + f'<div class="lw-phase-badge">Tour {g["turn"]} · {label} · {turn_owner}{next_moves}{money}{bases}{clock}</div>',
+            # Deux lignes : la phase et qui joue ; puis la suite et les ressources.
+            + f'<div class="lw-phase-badge"><span class="lw-badge-line">Tour {g["turn"]} · {label} · {turn_owner}</span>'
+            + f'<span class="lw-badge-line lw-badge-sub">{next_moves.removeprefix(" · ")}{money}{bases}{clock}</span></div>',
             unsafe_allow_html=True,
         )
 

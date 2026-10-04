@@ -925,6 +925,17 @@
         layer.appendChild(svgNode("polygon", { points: hexPoints(c.x, c.y, SIZE - 2), fill: "#ef4444", "fill-opacity": 0.22, stroke: "#dc2626", "stroke-width": 4 }));
         const r = 15;
         layer.appendChild(svgNode("path", { d: `M${c.x - r} ${c.y - r} L${c.x + r} ${c.y + r} M${c.x + r} ${c.y - r} L${c.x - r} ${c.y + r}`, stroke: "#dc2626", "stroke-width": 6, "stroke-linecap": "round", opacity: 0.75 }));
+        // La pièce détruite et celui qui l'a abattue.
+        if (death.name) {
+          const lines = [`☠ ${death.name}`].concat(death.killer ? [`par ${death.killer}`] : []);
+          const w = Math.max(...lines.map(t => t.length)) * 6.2 + 12, h = lines.length * 12 + 6;
+          const y0 = c.y + SIZE * 0.32;
+          layer.appendChild(svgNode("rect", { x: c.x - w / 2, y: y0, width: w, height: h, rx: 6, fill: "rgba(127,29,29,0.92)", stroke: "#fecaca", "stroke-width": 1.2 }));
+          lines.forEach((t, i) => layer.appendChild(svgNode("text", {
+            x: c.x, y: y0 + 9.5 + i * 12, "text-anchor": "middle", "dominant-baseline": "middle",
+            "font-size": 10, "font-weight": i ? 700 : 900, fill: "#ffffff",
+          }, t)));
+        }
       }
       return seen;
     }
@@ -1688,8 +1699,8 @@
         pop.textContent = info.text + (info.sub ? ` — ${info.sub}` : "");
         doc.body.appendChild(pop);
         requestAnimationFrame(() => { pop.style.opacity = "1"; pop.style.transform = "translateY(0)"; });
-        setTimeout(() => { pop.style.opacity = "0"; pop.style.transform = "translateY(-6px)"; }, 1500);
-        setTimeout(() => pop.remove(), 1750);
+        setTimeout(() => { pop.style.opacity = "0"; pop.style.transform = "translateY(-6px)"; }, 3000);
+        setTimeout(() => pop.remove(), 3250);
       } catch (error) {
         // Page parente inaccessible : pas de pop.
       }
