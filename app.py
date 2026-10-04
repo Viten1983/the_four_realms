@@ -10840,8 +10840,9 @@ def move_hero(g, owner, hero_id, destination):
     hero["pos"] = list(destination)
     hero["moved_turn"] = g["turn"]
 
-    # Le marqueur suit la dernière case d'or ou de mana traversée.
-    crossed = [p for p in route[1:] if key(p) in g["resources"]]
+    # Le marqueur suit la dernière case d'or ou de mana traversée (libre :
+    # un seul marqueur par case de ressource).
+    crossed = [p for p in route[1:] if key(p) in g["resources"] and marker_free(g, hero, p)]
     if crossed:
         hero["marker"] = list(crossed[-1])
     log(
@@ -12199,7 +12200,7 @@ def set_hero_attack(g, owner, hero_id, target_id):
     # 1. Déplacement jusqu'à la case de frappe (marqueur de récolte compris).
     if stand != tuple(hero["pos"]):
         _, routes = hero_paths(g, hero)
-        crossed = [p for p in routes[stand][1:] if key(p) in g["resources"]]
+        crossed = [p for p in routes[stand][1:] if key(p) in g["resources"] and marker_free(g, hero, p)]
         if crossed:
             hero["marker"] = list(crossed[-1])
         log(g, f"{hero['name']} : {coord(hero['pos'])} → {coord(stand)}.")
@@ -17356,6 +17357,7 @@ def game_action(bundle, fn, *args):
     log_start = len(g["log"])
     g.pop("_fx_destroyed", None)
     g.pop("_fx_routes", None)
+    planned = fx_planned_damage(g, getattr(fn, "__name__", ""), args)
     result = _lw_fx_previous_game_action(bundle, fn, *args)
     g = bundle["game"]
     try:
@@ -17364,6 +17366,8 @@ def game_action(bundle, fn, *args):
         )
     except Exception:  # le journal ne doit jamais bloquer une action
         entry = None
+    if entry is not None and planned:
+        entry.update(planned)
     g.pop("_fx_destroyed", None)
     g.pop("_fx_routes", None)
     if entry is None or not entry["text"] or getattr(fn, "__name__", "") in FX_SILENT_ACTIONS:
@@ -17556,6 +17560,7 @@ def fx_board_payload(bundle, g, viewer, recent):
             "shots": e.get("shots", []), "moves": e.get("moves", []),
             "hits": e.get("hits", []), "spawns": e.get("spawns", []),
             "auras": e.get("auras", []), "text": e.get("text", ""),
+            "dealt": e.get("dealt"), "target_id": e.get("target_id"),
         })
     game_id = (bundle or {}).get("game_id") or (bundle or {}).get("code") or ""
     return {
@@ -18037,11 +18042,12 @@ HARVEST_BY_AGE[DERNIERS_NES] = {
 
 # Héros Vagabonds : (or, mana) récoltés par tour sur la case du marqueur.
 HERO_HARVEST = {
-    "De Marbourg": {1: (200, 1), 2: (250, 1), 3: (500, 2)},
-    "Sayn": {1: (125, 1), 2: (150, 1), 3: (175, 2)},
-    "Wulfoad": {1: (125, 1), 2: (150, 1), 3: (175, 2)},
-    "Campbell": {2: (250, 1), 3: (350, 2)},
-    "Aalongue": {3: (400, 2)},
+    # Âge I : 1 mana ; âge II : 2 mana ; âge III : 3 mana (tous les héros).
+    "De Marbourg": {1: (200, 1), 2: (250, 2), 3: (500, 3)},
+    "Sayn": {1: (125, 1), 2: (150, 2), 3: (175, 3)},
+    "Wulfoad": {1: (125, 1), 2: (150, 2), 3: (175, 3)},
+    "Campbell": {2: (250, 2), 3: (350, 3)},
+    "Aalongue": {3: (400, 3)},
 }
 for _hero, _ages in HERO_HARVEST.items():
     for _age, (_gold, _mana) in _ages.items():
@@ -18801,6 +18807,36 @@ def game_action(bundle, fn, *args):
                 "shots": [], "moves": [], "hits": [], "spawns": [], "auras": [],
             })
     return result
+
+
+# ============================================================
+# UN SEUL MARQUEUR PAR CASE ; DÉGÂTS COMPLETS DE L'ATTAQUANT
+# ============================================================
+
+def marker_free(g, hero, pos):
+    """Aucun autre héros n'a déjà son marqueur sur cette case."""
+    pos = [int(v) for v in pos]
+    return not any(
+        h is not hero and is_hero(h) and h.get("marker") and [int(v) for v in h["marker"]] == pos
+        for h in g["entities"]
+    )
+
+
+def fx_planned_damage(g, name, args):
+    """Force de frappe de l'attaquant, mesurée avant l'attaque : c'est elle
+    que le plateau affiche sur la cible (un Barbare de 6 PF inflige « −6 PF »
+    même à une unité qui n'en a que 3)."""
+    try:
+        if name == "attack" and len(args) > 1:
+            attackers = [entity(g, i) for i in args[0]]
+            dealt = sum(float(a["pf"]) + float(a.get("attack_bonus", 0) or 0) for a in attackers)
+            return {"dealt": dealt, "target_id": args[1]}
+        if name == "ranged_attack" and len(args) > 1:
+            values = ranged_attack_values(g, entity(g, args[0]), entity(g, args[1]))
+            return {"dealt": float(values["damage"]), "target_id": args[1]}
+    except Exception:
+        return None
+    return None
 
 
 # ============================================================

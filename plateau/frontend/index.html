@@ -1191,10 +1191,12 @@
       const dealt = (ev.hits || []).filter(h => h.damage && h.owner !== ev.owner).reduce((a, h) => a + h.damage, 0);
       const taken = (ev.hits || []).filter(h => h.damage && h.owner === ev.owner).reduce((a, h) => a + h.damage, 0);
       const combined = ev.kind === "melee" && dealt > 0 && taken > 0;
+      // Force de frappe complète de l'attaquant (pas seulement les PF perdus).
+      const full = ev.dealt ? Number(ev.dealt) : dealt;
       if (combined) {
         const target = (ev.shots && ev.shots[0] && ev.shots[0].to) || ev.hits.find(h => h.owner !== ev.owner).pos;
         floatSegments(pt(target), [
-          { text: `−${pfNumber(dealt)} PF`, color: PF_DEALT },
+          { text: `−${pfNumber(full)} PF`, color: PF_DEALT },
           { text: "  |  ", color: "#111827" },
           { text: `−${pfNumber(taken)} PF`, color: PF_TAKEN },
         ]);
@@ -1204,6 +1206,9 @@
         if (hit.damage) {
           if (!combined) {
             const label = hitLabel(hit, ev);
+            if (ev.dealt && hit.id === ev.target_id && hit.owner !== ev.owner) {
+              label.text = `−${pfNumber(Number(ev.dealt))} PF`;
+            }
             if (label.color === PF_TAKEN) floatSegments(c, [label], i * 120);
             else floatText(c, label.text, label.color, i * 120);
           }
@@ -1416,8 +1421,12 @@
       });
     }
 
+    let announceUntil = 0;  // fin de l'annonce de phase en cours
     function pumpFx() {
       if (fxBusy) return;
+      // L'annonce de phase d'abord : les manœuvres se jouent après elle.
+      const wait = announceUntil - performance.now();
+      if (wait > 0) { setTimeout(pumpFx, wait + 60); return; }
       const ev = fxQueue.shift();
       if (!ev) return;
       fxBusy = true;
@@ -1558,6 +1567,7 @@
       const id = `phase:${info.key}`;
       if (playedFx.has(id)) return;
       rememberFx(id);
+      announceUntil = performance.now() + 2250;
       const layer = svgNode("g", { "pointer-events": "none" });
       const w = baseW * 0.62, h = Math.max(110, baseH * 0.14);
       // Au centre de la partie du plateau visible à l'écran.
@@ -1819,9 +1829,9 @@ if (reachable || placed) {
         // Fin de partie : rien ne passe par-dessus la banderole et l'image.
         drawVictoryBanner();
       } else {
+        drawPhaseAnnounce();
         animateLastMove();
         queueFx();
-        drawPhaseAnnounce();
       }
       wrapper.scrollLeft = previousScrollLeft;
       wrapper.scrollTop = previousScrollTop;
