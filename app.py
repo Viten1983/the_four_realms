@@ -1893,8 +1893,9 @@ def move_unit(g, eid, destination):
         f"{remaining} restant(s).",  
     )  
   
-    if remaining <= 0:  
-        # Tout le budget a été dépensé : aucune attaque possible.  
+    if remaining <= 0 and not caster_has_spell(g, unit):
+        # Tout le budget a été dépensé : aucune attaque possible
+        # (un lanceur de sorts garde la main pour lancer son sort).
         unit["acted"] = True  
         next_activation(g)  
         return  
@@ -18837,6 +18838,45 @@ def fx_planned_damage(g, name, args):
     except Exception:
         return None
     return None
+
+
+# ============================================================
+# LANCEURS DE SORTS : SE DÉPLACER PUIS LANCER LEUR SORT
+# Mage des montagnes, Aramil, Sorcier, Décimant et Dirigeable gardent leur
+# activation après avoir dépensé tout leur déplacement, tant qu'un sort est
+# disponible : le joueur lance son sort ou termine l'activation.
+# ============================================================
+
+SPELL_CASTERS = {"Mage des montagnes", "Aramil", "Sorcier", "Décimant", "Dirigeable"}
+
+
+def caster_has_spell(g, unit):
+    """Ce lanceur de sorts a-t-il encore un sort à lancer ce tour ?"""
+    if unit is None or unit.get("name") not in SPELL_CASTERS:
+        return False
+    if unit["name"] in MAGES:
+        return g["turn"] >= unit.get("next_spell_turn", 1)
+    return True
+
+
+_lw_caster_previous_can_move = can_move
+
+
+def can_move(g, unit):
+    if _lw_caster_previous_can_move(g, unit):
+        return True
+    # Déplacement épuisé, activation en cours, sort encore disponible :
+    # il peut encore agir (lancer son sort), pas se déplacer.
+    return (
+        unit is not None
+        and g.get("phase") == "move"
+        and g.get("moving_unit_id") == unit.get("id")
+        and unit.get("owner") == g.get("active")
+        and not unit.get("acted")
+        and not unit.get("wait")
+        and unit.get("frozen_until_turn", 0) < g["turn"]
+        and caster_has_spell(g, unit)
+    )
 
 
 # ============================================================
