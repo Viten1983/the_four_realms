@@ -20141,8 +20141,8 @@ HOME_CSS = """
     background-attachment: fixed !important;
 }
 .stApp .block-container { max-width: 1180px !important; padding-top: 2.2rem !important; }
-.lw-hero { text-align: center; margin: -1rem auto 1.4rem; max-width: 333px; }
-.lw-hero-small { max-width: 260px; }
+.lw-hero { text-align: center; margin: -1rem auto 1.6rem; max-width: 100%; }
+.lw-hero-small { max-width: 100%; }
 .lw-hero-frame {
     position: relative; padding: 6px;
     background: #000;
@@ -20153,17 +20153,17 @@ HOME_CSS = """
 .lw-hero-frame::before {
     content: ""; position: absolute; inset: 3px; pointer-events: none; background: CORNERS;
 }
-.lw-hero-frame img { width: 100%; display: block; border-radius: 2px;
-    -webkit-mask-image: radial-gradient(ellipse 72% 72% at center, #000 78%, transparent 100%);
-            mask-image: radial-gradient(ellipse 72% 72% at center, #000 78%, transparent 100%); }
+.lw-hero-frame img { width: 100% !important; max-width: none !important; height: auto; display: block; border-radius: 2px;
+    max-height: none !important; object-fit: cover !important; }
 .lw-hero-sub {
     display: flex; align-items: center; justify-content: center; gap: 14px;
-    margin-top: 16px; font-family: "Cinzel", Georgia, serif; font-size: 15px; font-weight: 700;
-    letter-spacing: 0.32em; text-transform: uppercase; color: #e7cf94; text-shadow: 0 2px 4px #000;
+    margin-top: 18px; font-family: "Cinzel", Georgia, serif; font-size: 30px; font-weight: 800;
+    letter-spacing: 0.26em; text-transform: uppercase; color: #f1d68b;
+    text-shadow: 0 2px 4px #000, 0 0 18px rgba(217, 180, 95, 0.45);
     white-space: nowrap;
 }
 .lw-hero-sub::before, .lw-hero-sub::after {
-    content: ""; flex: 1 1 60px; max-width: 140px; height: 1px;
+    content: ""; flex: 1 1 60px; max-width: 260px; height: 2px;
     background: linear-gradient(90deg, transparent, #d9b45f);
 }
 .lw-hero-sub::after { background: linear-gradient(270deg, transparent, #d9b45f); }
@@ -20175,6 +20175,9 @@ HOME_CSS = """
 /* Les fiches et règles du duel local sont regroupées dans le Codex. */
 .st-key-lw_home_local [data-testid="stExpander"] { display: none !important; }
 .st-key-lw_home_local div:has(> [data-testid="stExpander"]) { display: none !important; }
+@media (max-width: 640px) {
+    .lw-hero-sub { font-size: 18px; letter-spacing: 0.16em; gap: 8px; }
+}
 .lw-home-footer {
     text-align: center; margin: 2.4rem 0 0.6rem; font-family: "Cinzel", serif; font-size: 12px;
     letter-spacing: 0.25em; color: #8f7a55; text-transform: uppercase;
@@ -20186,7 +20189,7 @@ HOME_CSS = """
 # En partie : le titre doré du logo, net et lisible.
 LOGO_BANNER = Path(__file__).resolve().parent / "assets" / "logo_ruban.jpg"
 # Logo complet (épée et quatre blasons), servi par Streamlit.
-LOGO_HOME_URL = "app/static/ui/logo_four_realms.jpg"
+LOGO_HOME_URL = "app/static/ui/logo_bandeau_menu.jpg"
 
 
 def render_logo_hero(subtitle, small=False):
