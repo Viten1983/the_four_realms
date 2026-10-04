@@ -822,6 +822,7 @@
       board.appendChild(layer);  // au-dessus des autres cases pendant le trajet
       const total = (points.length - 1) * STEP_MS;
       const startTime = Date.now();
+      walking += 1;
       layer.setAttribute("transform", `translate(${points[0].x},${points[0].y})`);
       function frame() {
         const t = Math.min(1, (Date.now() - startTime) / total);
@@ -833,7 +834,7 @@
         const y = points[i].y + (points[i + 1].y - points[i].y) * ease;
         layer.setAttribute("transform", `translate(${x},${y})`);
         if (t < 1) setTimeout(frame, 16);
-        else layer.removeAttribute("transform");
+        else { layer.removeAttribute("transform"); walking -= 1; maybeAnnounce(); }
       }
       setTimeout(frame, 16);
     }
@@ -1308,13 +1309,14 @@
     function walkGhost(node, route, done) {
       const points = route.map(p => pt(p));
       if (points.length < 2) { if (points[0]) placeGhost(node, points[0]); done(); return; }
+      walking += 1;
       tween((points.length - 1) * GHOST_STEP_MS, t => {
         const pos = t * (points.length - 1);
         const i = Math.min(points.length - 2, Math.floor(pos));
         const f = pos - i;
         const e = f < 0.5 ? 2 * f * f : 1 - Math.pow(-2 * f + 2, 2) / 2;
         placeGhost(node, { x: points[i].x + (points[i + 1].x - points[i].x) * e, y: points[i].y + (points[i + 1].y - points[i].y) * e });
-      }, done);
+      }, () => { walking -= 1; done(); maybeAnnounce(); });
     }
     function eventActorIds(ev) {
       const ids = [];
@@ -1359,8 +1361,11 @@
       const piece = (args.entities || []).find(p => p.id === actor.id);
       if (!piece) { releaseGhost(actor.id, ghost); return; }
       const end = pt(piece.pos);
+      walking += 1;
       tween(Math.hypot(end.x - from.x, end.y - from.y) > 2 ? 380 : 120, t => placeGhost(ghost, { x: from.x + (end.x - from.x) * t, y: from.y + (end.y - from.y) * t }), () => {
         releaseGhost(actor.id, ghost);
+        walking -= 1;
+        maybeAnnounce();
       });
     }
 
@@ -1431,6 +1436,7 @@
 
     let announceUntil = 0;  // fin de l'annonce de phase en cours
     let pendingAnnounce = null;  // annonce qui attend la fin de la phase précédente
+    let walking = 0;  // pièces en train de se déplacer à l'écran
 
     // Action de la phase qui se termine (ex. derniers déplacements de l'IA
     // avant la production) : elle se joue AVANT l'annonce de la phase suivante.
@@ -1439,9 +1445,23 @@
       return Number(ev.round) !== Number(info.turn) || ev.phase !== info.phase;
     }
 
+    function hasRoute(ev) {
+      return (ev.moves || []).some(m => m.route && m.route.length > 1) || (ev.shots || []).some(s => s.route && s.route.length > 1);
+    }
+
+    // Action à jouer avant l'annonce en attente.
+    function playsBeforeAnnounce(ev) {
+      // (Production : tant qu'un déplacement attend, tout passe avant.)
+      return previousPhaseEvent(ev, pendingAnnounce) || (pendingAnnounce.phase === "build" && fxQueue.some(hasRoute));
+    }
+
     function maybeAnnounce() {
-      if (!pendingAnnounce || fxBusy) return;
-      if (fxQueue.length && previousPhaseEvent(fxQueue[0], pendingAnnounce)) return;
+      // Jamais pendant qu'une pièce se déplace encore.
+      if (!pendingAnnounce || fxBusy || walking > 0) return;
+      if (fxQueue.length && playsBeforeAnnounce(fxQueue[0])) return;
+      // Production : après TOUS les déplacements en attente (aucun ne se
+      // fait pendant la production elle-même).
+      if (pendingAnnounce.phase === "build" && fxQueue.some(hasRoute)) return;
       const info = pendingAnnounce;
       pendingAnnounce = null;
       showPhaseAnnounce(info);
@@ -1452,6 +1472,9 @@
       // Annonce de la nouvelle phase dès que la phase précédente est jouée ;
       // les actions de la nouvelle phase se jouent après elle.
       maybeAnnounce();
+      // Annonce encore en attente (une pièce finit son trajet) : les
+      // actions de la nouvelle phase attendent qu'elle soit passée.
+      if (pendingAnnounce && fxQueue.length && !playsBeforeAnnounce(fxQueue[0])) { setTimeout(pumpFx, 150); return; }
       const wait = announceUntil - performance.now();
       if (wait > 0) { setTimeout(pumpFx, wait + 60); return; }
       const ev = fxQueue.shift();

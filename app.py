@@ -4726,6 +4726,7 @@ def render_build_controls(g, view, local=False, on_board=False):
                 view["resources"][key(pos)]  
                 for pos in neighbors(source["pos"])  
                 if key(pos) in view["resources"]  
+                and harvested_by_this_base(view, source, pos)
             ]  
   
             st.caption(  
@@ -13825,7 +13826,10 @@ def board_event(event, g, view):
     target = next((e for e in targets if tuple(e["pos"]) == pos), None)
     if target is None and spell == "harvest" and key(pos) in g["resources"]:
         # Clic sur la case d'or ou de mana : la base voisine qui la récolte.
-        target = next((e for e in targets if distance(tuple(e["pos"]), pos) == 1), None)
+        first = resource_owner_base(g, airship["owner"], pos)
+        target = next((e for e in targets if first is not None and e["id"] == first["id"]), None) or next(
+            (e for e in targets if distance(tuple(e["pos"]), pos) == 1), None
+        )
     if target is None or target["id"] == airship["id"]:
         return _lw_ship_previous_board_event(event, g, view)
 
@@ -17581,10 +17585,9 @@ def fx_phase_index(round_number, phase):
 
 def fx_deaths(g):
     """Case(s) où une pièce est morte lors du DERNIER combat seulement
-    (une seule case rouge avec sa croix), effacée au tour suivant."""
-    now = fx_phase_index(g["turn"], g["phase"])
+    (une seule case rouge avec sa croix), effacée dès le nouveau tour."""
     for e in reversed(g.get("journal") or []):
-        if now - fx_phase_index(e.get("round", 0), e.get("phase")) > 2:
+        if int(e.get("round", 0)) != int(g["turn"]):
             break
         # La cible abattue d'abord ; l'attaquant tué en riposte sinon.
         dead = sorted(
@@ -19154,6 +19157,56 @@ def render_board(g, view, readonly=False):
 
 
 # ============================================================
+# UNE CASE DE RESSOURCE, UNE SEULE BASE
+# Plusieurs bases d'un joueur autour de la même case d'or ou de mana :
+# seule la première posée (la plus ancienne) la récolte.
+# ============================================================
+
+def resource_owner_base(g, owner, pos):
+    """Base du joueur qui récolte cette case : la première posée à côté."""
+    bases = [
+        e for e in g["entities"]
+        if e["kind"] == "base" and e["owner"] == owner and not is_hero(e)
+        and tuple(pos) in {tuple(n) for n in neighbors(tuple(e["pos"]))}
+    ]
+    return min(bases, key=lambda e: e["id"]) if bases else None
+
+
+def harvested_by_this_base(g, base, pos):
+    """Cette base récolte-t-elle la case (pas une base posée avant elle) ?"""
+    if base.get("kind") != "base" or is_hero(base):
+        return True
+    first = resource_owner_base(g, base["owner"], pos)
+    return first is None or first["id"] == base["id"]
+
+
+_lw_onebase_previous_collect = collect_adjacent_resources
+
+
+def collect_adjacent_resources(g, base):
+    if base.get("kind") != "base" or is_hero(base):
+        return _lw_onebase_previous_collect(g, base)
+    resources = g["resources"]
+    claimed = {}
+    for pos in neighbors(tuple(base["pos"])):
+        k = key(pos)
+        if k not in resources:
+            continue
+        first = resource_owner_base(g, base["owner"], pos)
+        if first is not None and first["id"] != base["id"]:
+            claimed[k] = resources[k]
+    if not claimed:
+        return _lw_onebase_previous_collect(g, base)
+    # Cases déjà récoltées par une base plus ancienne : invisibles le temps
+    # de cette récolte.
+    g["resources"] = {k: v for k, v in resources.items() if k not in claimed}
+    try:
+        return _lw_onebase_previous_collect(g, base)
+    finally:
+        g["resources"] = resources
+
+
+# ============================================================
 # IA : PLANS DE FACTION (niveaux Expert et Destructeur sanguinaire)
 # Chaque faction suit un plan de partie : ordre des bâtiments, unités
 # préférées, moment des changements d'âge, cases riches à occuper,
@@ -19744,6 +19797,29 @@ def render_online_lobby(room, seat):
             st.warning("👤 Indique ton pseudo pour pouvoir te déclarer prêt.")
     finally:
         st.checkbox = _lw_pseudo_original_checkbox
+
+
+# ============================================================
+# IA : UNE CASE DE RESSOURCE DÉJÀ RÉCOLTÉE N'ATTIRE PLUS DE BASE
+# (une seule base récolte chaque case : voir resource_owner_base)
+# ============================================================
+
+_lw_onebase_previous_ai_colony_value = ai_colony_value
+
+
+def ai_colony_value(g, p):
+    resources = g["resources"]
+    taken = {
+        key(q) for q in neighbors(tuple(p))
+        if key(q) in resources and resource_owner_base(g, g["active"], q) is not None
+    }
+    if not taken:
+        return _lw_onebase_previous_ai_colony_value(g, p)
+    g["resources"] = {k: v for k, v in resources.items() if k not in taken}
+    try:
+        return _lw_onebase_previous_ai_colony_value(g, p)
+    finally:
+        g["resources"] = resources
 
 
 # ============================================================
