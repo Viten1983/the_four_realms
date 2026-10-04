@@ -1,0 +1,40 @@
+# Thème médiéval de The Four Realms : cuir sombre, or et parchemin.
+[server]
+enableStaticServing = true
+
+[theme]
+base = "dark"
+primaryColor = "#c9a24a"
+backgroundColor = "#15100b"
+secondaryBackgroundColor = "#2a2016"
+textColor = "#ecdcb8"
+borderColor = "#6b5230"
+linkColor = "#e8c872"
+redColor = "#d64040"
+greenColor = "#4caf50"
+blueColor = "#5b8fd6"
+baseRadius = "6px"
+font = "EB Garamond, Georgia, serif"
+headingFont = "Cinzel, Georgia, serif"
+baseFontSize = 17
+
+[[theme.fontFaces]]
+family = "Cinzel"
+url = "app/static/fonts/Cinzel.ttf"
+weight = "400 900"
+
+[[theme.fontFaces]]
+family = "Cinzel Decorative"
+url = "app/static/fonts/CinzelDecorative-Bold.ttf"
+weight = "700"
+
+[[theme.fontFaces]]
+family = "EB Garamond"
+url = "app/static/fonts/EBGaramond.ttf"
+weight = "400 800"
+
+[theme.sidebar]
+backgroundColor = "#1d140d"
+secondaryBackgroundColor = "#2e2117"
+textColor = "#ecdcb8"
+borderColor = "#7a5c2e"

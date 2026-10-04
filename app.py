@@ -5447,43 +5447,28 @@ def render_scores(g, view):
             finished = g["winner"] is not None  
             active = not finished and g["active"] == owner  
   
-            if finished:  
-                border = "#cbd5e1"  
-                background = "#f8fafc"  
-                label = "Partie terminée"  
-                status_color = "#64748b"  
-            elif active:  
-                border = "#15803d"  
-                background = "#f0fdf4"  
-                label = "🟢 À TOI DE JOUER"  
-                status_color = "#15803d"  
-            else:  
-                border = "#dc2626"  
-                background = "#fef2f2"  
-                label = "🔴 EN ATTENTE"  
-                status_color = "#dc2626"  
-  
-            # HTML sans lignes vides ni indentation :  
-            # évite l'affichage de balises comme du code Markdown.  
-            card = (  
-                f'<div style="'  
-                f'border: 2px solid {border};'  
-                f'border-radius: 12px;'  
-                f'background: {background};'  
-                f'padding: 12px 16px;'  
-                f'margin-bottom: 10px;'  
-                f'color: #172033;">'  
-                f'<div style="font-size: 22px; font-weight: 800;">'  
-                f'{escape(faction_of(g, owner)["name"])}'  
-                f'</div>'  
-                f'<div style="color: {status_color};'  
-                f'font-weight: 800; margin-top: 6px;">'  
-                f'{label}'  
-                f'</div>'  
-                f'</div>'  
-            )  
-  
-            st.markdown(card, unsafe_allow_html=True)  
+            if finished:
+                crest = "#d9b45f"
+                label = "⚜ PARTIE TERMINÉE"
+            elif active:
+                crest = "#7fd65f"
+                label = "⚔ À TOI DE JOUER"
+            else:
+                crest = "#e0573f"
+                label = "⏳ EN ATTENTE"
+
+            # HTML sans lignes vides ni indentation :
+            # évite l'affichage de balises comme du code Markdown.
+            name = faction_of(g, owner)["name"]
+            card = (
+                f'<div class="lw-crest{" lw-crest-active" if active else ""}" style="--lw-crest: {crest};">'
+                f'<div class="lw-crest-shield">{escape(name[:1])}</div>'
+                f'<div><div class="lw-crest-name">{escape(name)}</div>'
+                f'<div class="lw-crest-status">{label}</div></div>'
+                f'</div>'
+            )
+
+            st.markdown(card, unsafe_allow_html=True)
   
             public = g["players"][owner]  
   
@@ -18928,6 +18913,596 @@ def render_online_lobby(room, seat):
             st.warning("👤 Indique ton pseudo pour pouvoir te déclarer prêt.")
     finally:
         st.checkbox = _lw_pseudo_original_checkbox
+
+
+# ============================================================
+# THÈME MÉDIÉVAL : CUIR, OR ET PARCHEMIN
+# Polices et textures servies par Streamlit (dossier static/, voir
+# .streamlit/config.toml) : Cinzel pour les titres, EB Garamond pour le texte.
+# ============================================================
+
+import contextlib
+from urllib.parse import quote as _lw_quote
+
+
+def _lw_corner_svg(rotate):
+    """Ornement doré d'angle (une équerre et un losange)."""
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='46' height='46' viewBox='0 0 46 46'>"
+        f"<g transform='rotate({rotate} 23 23)' fill='none' stroke-linecap='round'>"
+        "<path d='M3 43 V13 Q3 3 13 3 H43' stroke='%23d9b45f' stroke-width='2'/>"
+        "<path d='M9 43 V17 Q9 9 17 9 H43' stroke='%238a6a32' stroke-width='1'/>"
+        "<path d='M13 7 l4 4 l-4 4 l-4 -4 z' transform='translate(0 2)' fill='%23e8c872' stroke='none'/>"
+        "</g></svg>"
+    )
+    return "url(\"data:image/svg+xml;utf8," + _lw_quote(svg, safe="=/:;'%#,. ") + "\")"
+
+
+_LW_CORNERS = (
+    f"{_lw_corner_svg(0)} top left / 46px no-repeat, "
+    f"{_lw_corner_svg(90)} top right / 46px no-repeat, "
+    f"{_lw_corner_svg(270)} bottom left / 46px no-repeat, "
+    f"{_lw_corner_svg(180)} bottom right / 46px no-repeat"
+)
+
+_LW_PANELS = (
+    ".st-key-lw_home_profile, .st-key-lw_home_ai, .st-key-lw_home_online, "
+    ".st-key-lw_home_local, .st-key-lw_home_codex, "
+    "section[data-testid='stSidebar'] .st-key-lw_side_info, "
+    "section[data-testid='stSidebar'] .st-key-lw_side_actions, "
+    "section[data-testid='stSidebar'] .st-key-lw_side_unit"
+)
+
+MEDIEVAL_CSS = """
+<style>
+:root {
+    --lw-gold: #d9b45f;
+    --lw-gold-light: #f1d68b;
+    --lw-gold-dark: #8a6a32;
+    --lw-ink: #ecdcb8;
+    --lw-ink-soft: #bfa982;
+    --lw-leather: #21170f;
+    --lw-blood: #9b2020;
+    --lw-forest: #2f6a2b;
+}
+
+/* ---- Fond : pierre sombre et vignettage ---- */
+.stApp {
+    background:
+        radial-gradient(ellipse at 50% 0%, rgba(120, 82, 34, 0.22), transparent 60%),
+        radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.65) 100%),
+        url("app/static/ui/stone.jpg") repeat,
+        #15100b !important;
+    background-attachment: fixed !important;
+}
+header[data-testid="stHeader"] {
+    background: linear-gradient(180deg, rgba(10, 7, 4, 0.92), rgba(10, 7, 4, 0.0)) !important;
+}
+[data-testid="stAppDeployButton"], .stAppDeployButton { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+
+/* ---- Titres ---- */
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+    font-family: "Cinzel", Georgia, serif !important;
+    color: var(--lw-gold-light) !important;
+    letter-spacing: 0.05em;
+    text-shadow: 0 2px 0 #000, 0 0 14px rgba(217, 180, 95, 0.25);
+}
+.stApp h3 { font-weight: 700 !important; }
+.stApp p, .stApp li, .stApp label { letter-spacing: 0.005em; }
+[data-testid="stCaptionContainer"], .stApp small { color: var(--lw-ink-soft) !important; }
+
+/* ---- Séparateurs : filet doré ---- */
+.stApp hr {
+    border: none !important;
+    height: 1px !important;
+    background: linear-gradient(90deg, transparent, var(--lw-gold-dark), var(--lw-gold), var(--lw-gold-dark), transparent) !important;
+    opacity: 0.9;
+}
+
+/* ---- Boutons : plaques de bronze ---- */
+.stApp button[data-testid="stBaseButton-secondary"],
+.stApp button[data-testid="stBaseButton-tertiary"],
+.stApp [data-testid="stDownloadButton"] button,
+.stApp [data-testid="stFileUploaderDropzone"] button {
+    font-family: "Cinzel", Georgia, serif !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.03em;
+    color: var(--lw-ink) !important;
+    background: linear-gradient(180deg, #47331d 0%, #2c1f12 55%, #22170d 100%) !important;
+    border: 1px solid var(--lw-gold-dark) !important;
+    border-radius: 5px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 226, 160, 0.18), inset 0 -2px 0 rgba(0, 0, 0, 0.45),
+                0 2px 5px rgba(0, 0, 0, 0.55) !important;
+    text-shadow: 0 1px 0 #000;
+    transition: border-color .15s, box-shadow .15s, filter .15s, transform .05s;
+}
+.stApp button[data-testid="stBaseButton-secondary"]:hover:not(:disabled),
+.stApp [data-testid="stDownloadButton"] button:hover:not(:disabled) {
+    border-color: var(--lw-gold-light) !important;
+    color: #fff3d2 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 226, 160, 0.3), 0 0 0 1px rgba(241, 214, 139, 0.25),
+                0 0 14px rgba(217, 180, 95, 0.35), 0 2px 5px rgba(0, 0, 0, 0.55) !important;
+}
+.stApp button:active:not(:disabled) { transform: translateY(1px); }
+
+/* Bouton principal : or martelé */
+.stApp button[data-testid="stBaseButton-primary"] {
+    font-family: "Cinzel", Georgia, serif !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.04em;
+    color: #2a1a08 !important;
+    background: linear-gradient(180deg, #f6dc92 0%, #d7ab52 45%, #a87a2c 100%) !important;
+    border: 1px solid #f7e2a6 !important;
+    border-radius: 5px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -2px 0 rgba(90, 58, 14, 0.55),
+                0 0 0 1px #5a3c12, 0 3px 8px rgba(0, 0, 0, 0.6) !important;
+    text-shadow: 0 1px 0 rgba(255, 240, 200, 0.6);
+}
+.stApp button[data-testid="stBaseButton-primary"]:hover:not(:disabled) {
+    filter: brightness(1.08) saturate(1.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 0 1px #5a3c12,
+                0 0 18px rgba(241, 214, 139, 0.55), 0 3px 8px rgba(0, 0, 0, 0.6) !important;
+}
+.stApp button p { font-family: inherit !important; color: inherit !important; font-weight: inherit !important; }
+.stApp button:disabled { filter: grayscale(0.7) brightness(0.75); opacity: 0.6 !important; cursor: not-allowed; }
+
+/* ---- Champs de saisie ---- */
+.stApp [data-baseweb="input"], .stApp [data-baseweb="select"] > div, .stApp [data-baseweb="textarea"],
+.stApp [data-testid="stNumberInputContainer"] {
+    background: rgba(12, 8, 5, 0.75) !important;
+    border-color: var(--lw-gold-dark) !important;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.stApp [data-baseweb="input"]:focus-within, .stApp [data-baseweb="select"] > div:focus-within {
+    border-color: var(--lw-gold-light) !important;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6), 0 0 10px rgba(217, 180, 95, 0.35) !important;
+}
+.stApp [data-testid="stWidgetLabel"] p {
+    font-family: "Cinzel", Georgia, serif !important;
+    font-size: 0.82rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.06em;
+    color: var(--lw-gold) !important;
+    text-transform: uppercase;
+}
+.stApp [data-testid="stFileUploaderDropzone"] {
+    background: rgba(12, 8, 5, 0.6) !important;
+    border: 1px dashed var(--lw-gold-dark) !important;
+}
+
+/* ---- Encarts (info, avertissement, erreur) ---- */
+.stApp [data-testid="stAlert"] > div {
+    border-radius: 4px !important;
+    border-left: 4px solid currentColor;
+    background-color: rgba(18, 12, 7, 0.82) !important;
+    box-shadow: inset 0 0 0 1px rgba(217, 180, 95, 0.18);
+}
+
+/* ---- Volets dépliants : coffres de cuir ---- */
+.stApp [data-testid="stExpander"] details {
+    background: linear-gradient(180deg, rgba(46, 32, 19, 0.92), rgba(26, 18, 11, 0.94)) !important;
+    border: 1px solid var(--lw-gold-dark) !important;
+    border-radius: 5px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 226, 160, 0.10), 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.stApp [data-testid="stExpander"] summary {
+    font-family: "Cinzel", Georgia, serif !important;
+    font-weight: 700;
+    color: var(--lw-gold-light) !important;
+    letter-spacing: 0.03em;
+}
+.stApp [data-testid="stExpander"] summary p { font-family: inherit !important; }
+.stApp [data-testid="stExpander"] summary:hover { color: #fff3d2 !important; }
+
+/* ---- Onglets : bannières ---- */
+.stApp [data-testid="stTabs"] [role="tablist"] { gap: 8px; border-bottom: 1px solid var(--lw-gold-dark); padding: 0 6px; }
+.stApp [data-testid="stTabs"] [role="tablist"] > div:not([role="tab"]) { display: none !important; }
+.stApp [data-testid="stTabs"] [role="tab"] {
+    padding: 10px 22px !important;
+    background: linear-gradient(180deg, #3a2a18, #20160d) !important;
+    border: 1px solid var(--lw-gold-dark) !important;
+    border-bottom: none !important;
+    border-radius: 6px 6px 0 0 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 226, 160, 0.15);
+    margin-bottom: -1px;
+}
+.stApp [data-testid="stTabs"] [role="tab"] p {
+    font-family: "Cinzel", Georgia, serif !important;
+    font-size: 1.02rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.05em;
+    color: var(--lw-ink-soft) !important;
+}
+.stApp [data-testid="stTabs"] [role="tab"]:hover p { color: var(--lw-gold-light) !important; }
+.stApp [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    background: linear-gradient(180deg, #6b4a1f, #3b2914 70%, #2a1d10) !important;
+    border-color: var(--lw-gold) !important;
+    box-shadow: inset 0 2px 0 var(--lw-gold-light), 0 -4px 14px rgba(217, 180, 95, 0.25);
+}
+.stApp [data-testid="stTabs"] [role="tab"][aria-selected="true"] p {
+    color: #fff1c9 !important;
+    text-shadow: 0 0 10px rgba(241, 214, 139, 0.6), 0 1px 0 #000;
+}
+
+/* ---- Panneaux encadrés d'or ---- */
+PANELS {
+    position: relative;
+    background:
+        linear-gradient(180deg, rgba(36, 25, 15, 0.93), rgba(18, 12, 7, 0.95)),
+        url("app/static/ui/leather.jpg") repeat !important;
+    border: 1px solid var(--lw-gold-dark) !important;
+    border-radius: 4px !important;
+    box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.55), inset 0 0 0 5px rgba(217, 180, 95, 0.28),
+                inset 0 0 40px rgba(0, 0, 0, 0.55), 0 12px 30px rgba(0, 0, 0, 0.55) !important;
+    padding: 22px 24px !important;
+}
+PANELS_BEFORE {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    pointer-events: none;
+    background: CORNERS;
+    opacity: 0.95;
+}
+
+/* ---- Barres de défilement ---- */
+.stApp ::-webkit-scrollbar { width: 11px; height: 11px; }
+.stApp ::-webkit-scrollbar-track { background: #120d08; }
+.stApp ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #7a5a2a, #4a3418);
+    border: 2px solid #120d08; border-radius: 6px;
+}
+
+/* ---- Menu latéral : cuir sombre et liseré d'or ---- */
+section[data-testid="stSidebar"] {
+    background:
+        linear-gradient(90deg, rgba(10, 6, 3, 0.35), rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.45)),
+        url("app/static/ui/leather.jpg") repeat !important;
+    border-right: 2px solid var(--lw-gold-dark) !important;
+    box-shadow: inset -1px 0 0 rgba(241, 214, 139, 0.35), 6px 0 24px rgba(0, 0, 0, 0.6);
+}
+section[data-testid="stSidebar"] h3 {
+    font-size: 0.98rem !important;
+    letter-spacing: 0.03em !important;
+    margin: 0 0 6px !important;
+    padding-bottom: 6px !important;
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, var(--lw-gold), transparent) 1;
+}
+section[data-testid="stSidebar"] .st-key-lw_side_info,
+section[data-testid="stSidebar"] .st-key-lw_side_actions,
+section[data-testid="stSidebar"] .st-key-lw_side_unit { padding: 18px 16px !important; }
+
+/* ---- Partie : bandeau du titre ---- */
+.st-key-lw_logo_banner {
+    background:
+        linear-gradient(90deg, transparent 4%, rgba(217, 180, 95, 0.55) 22%, rgba(217, 180, 95, 0.0) 40%,
+                        rgba(217, 180, 95, 0.0) 60%, rgba(217, 180, 95, 0.55) 78%, transparent 96%) center 46% / 100% 1px no-repeat,
+        linear-gradient(90deg, transparent 8%, rgba(217, 180, 95, 0.3) 25%, rgba(217, 180, 95, 0.0) 40%,
+                        rgba(217, 180, 95, 0.0) 60%, rgba(217, 180, 95, 0.3) 75%, transparent 92%) center 54% / 100% 1px no-repeat,
+        radial-gradient(ellipse at center, rgba(120, 30, 20, 0.35), transparent 60%),
+        url("app/static/ui/leather.jpg") !important;
+    border: 1px solid var(--lw-gold-dark) !important;
+    box-shadow: inset 0 0 0 3px #120c07, inset 0 0 0 4px rgba(217, 180, 95, 0.35),
+                0 8px 24px rgba(0, 0, 0, 0.55) !important;
+}
+
+.stApp .st-key-lw_logo_banner { padding: 10px 12px !important; }
+.stApp .st-key-lw_logo_banner img {
+    height: 58px !important;
+    -webkit-mask-image: none !important; mask-image: none !important;
+    box-shadow: 0 0 0 1px #000, 0 4px 14px rgba(0, 0, 0, 0.7), 0 0 26px rgba(160, 40, 30, 0.35);
+}
+
+.stApp .block-container { padding-top: 3.2rem !important; }
+
+/* Fenêtres flottantes héritées : fond sombre, lisible avec le thème. */
+.stApp .st-key-lw_placement_confirm, .stApp .st-key-lw_action_confirm, .stApp .st-key-lw_production_popup {
+    background: #1d140c !important; color: var(--lw-ink) !important;
+}
+
+/* ---- Cartes des factions (en partie) ---- */
+.lw-crest {
+    position: relative;
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 18px; margin-bottom: 10px;
+    border-radius: 4px;
+    background:
+        linear-gradient(180deg, rgba(40, 28, 17, 0.94), rgba(18, 12, 7, 0.96)),
+        url("app/static/ui/leather.jpg");
+    border: 1px solid var(--lw-crest, var(--lw-gold-dark));
+    box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.55), inset 0 0 0 4px color-mix(in srgb, var(--lw-crest) 45%, transparent),
+                0 0 18px color-mix(in srgb, var(--lw-crest) 30%, transparent), 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+.lw-crest-shield {
+    flex: 0 0 auto; width: 40px; height: 46px;
+    clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+    background: linear-gradient(160deg, color-mix(in srgb, var(--lw-crest) 80%, #fff 20%), var(--lw-crest) 55%, #000 140%);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Cinzel", serif; font-weight: 900; color: #fff4d6; font-size: 20px;
+    text-shadow: 0 1px 2px #000; padding-bottom: 6px;
+}
+.lw-crest-name {
+    font-family: "Cinzel", Georgia, serif; font-size: 24px; font-weight: 800;
+    color: var(--lw-gold-light); letter-spacing: 0.06em; text-shadow: 0 2px 0 #000; line-height: 1.1;
+}
+.lw-crest-status {
+    margin-top: 4px; font-family: "Cinzel", serif; font-weight: 800; font-size: 13px; letter-spacing: 0.12em;
+    color: var(--lw-crest);
+}
+.lw-crest-active .lw-crest-status { animation: lw-pulse 1.6s ease-in-out infinite; }
+@keyframes lw-pulse { 50% { text-shadow: 0 0 12px currentColor; } }
+
+/* ---- Journal de bord : parchemin ---- */
+.stApp .lw-journal {
+    background:
+        radial-gradient(ellipse at center, transparent 55%, rgba(110, 72, 28, 0.35) 100%),
+        url("app/static/ui/parchment.jpg") !important;
+    border: 1px solid #6b4c1e !important;
+    border-radius: 4px !important;
+    box-shadow: inset 0 0 18px rgba(90, 56, 18, 0.45), 0 0 0 3px #2a1d10, 0 0 0 4px var(--lw-gold-dark),
+                0 8px 20px rgba(0, 0, 0, 0.5) !important;
+    padding: 10px 14px !important;
+    margin: 6px 4px 14px !important;
+}
+.stApp .lw-journal h4 {
+    color: #4a2e0c !important; text-shadow: none !important; font-size: 15px !important;
+}
+.stApp .lw-journal h4 * { color: #7a5426 !important; text-shadow: none !important; }
+.stApp .lw-journal .lw-j-empty { color: #6b5232 !important; }
+.stApp .lw-j-line {
+    background: rgba(255, 249, 232, 0.45) !important; color: #2b1d0e !important;
+    font-family: "EB Garamond", Georgia, serif; font-size: 15px !important;
+}
+.stApp .lw-j-old { background: transparent !important; }
+.stApp .lw-j-fresh { background: rgba(255, 214, 140, 0.55) !important; box-shadow: inset 0 0 0 1px #b7791f !important; }
+.stApp .lw-j-turn { color: #6b5232 !important; }
+.stApp .lw-j-loss { color: #a31515 !important; }
+.stApp .lw-j-gain { color: #1f6b1f !important; }
+.stApp .lw-j-riposte { color: #b45309 !important; }
+</style>
+"""
+MEDIEVAL_CSS = (
+    MEDIEVAL_CSS.replace("PANELS_BEFORE", ", ".join(s.strip() + "::before" for s in _LW_PANELS.split(",")))
+    .replace("PANELS", _LW_PANELS)
+    .replace("CORNERS", _LW_CORNERS)
+)
+CSS = CSS + MEDIEVAL_CSS
+
+
+# --- Menu latéral : actions possibles en vert forêt, impossibles en rouge sang.
+
+SIDEBAR_CSS = """
+<style>
+section[data-testid="stSidebar"] [class*="_choose_recruit_"] button,
+section[data-testid="stSidebar"] [class*="_choose_build_"] button,
+section[data-testid="stSidebar"] [class*="_choose_fast_"] button,
+section[data-testid="stSidebar"] [class*="_workers_"] button,
+section[data-testid="stSidebar"] [class*="_worker_build_"] button,
+section[data-testid="stSidebar"] [class*="_worker_fast_"] button,
+section[data-testid="stSidebar"] [class*="_upgrade_"] button,
+section[data-testid="stSidebar"] [class*="_mutate_"] button,
+section[data-testid="stSidebar"] [class*="_kamikaze_"] button,
+section[data-testid="stSidebar"] [class*="_fusion_go_"] button,
+section[data-testid="stSidebar"] [class*="_advance_age_ok_"] button {
+    background: linear-gradient(180deg, #4d8f3c 0%, #2f6a2b 50%, #1f4a1c 100%) !important;
+    border: 1px solid #9fcf7a !important;
+    color: #f4ffe8 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -2px 0 rgba(0, 0, 0, 0.35),
+                0 0 0 1px #0f2a0d, 0 2px 5px rgba(0, 0, 0, 0.55) !important;
+    text-shadow: 0 1px 1px #000 !important;
+    filter: none !important;
+    opacity: 1 !important;
+}
+section[data-testid="stSidebar"] [class*="_choose_"] button:hover,
+section[data-testid="stSidebar"] [class*="_upgrade_"] button:hover,
+section[data-testid="stSidebar"] [class*="_advance_age_ok_"] button:hover { filter: brightness(1.15) !important; }
+section[data-testid="stSidebar"] [class*="_choose_recruit_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_choose_build_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_choose_fast_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_workers_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_worker_build_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_worker_fast_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_upgrade_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_mutate_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_kamikaze_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_fusion_go_"] button:disabled,
+section[data-testid="stSidebar"] [class*="_advance_age_ko_"] button {
+    background: linear-gradient(180deg, #8e2a22 0%, #6a1712 55%, #4a0e0a 100%) !important;
+    border: 1px solid #d0745f !important;
+    color: #ffe9e2 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 0 1px #2a0604, 0 2px 5px rgba(0, 0, 0, 0.55) !important;
+    filter: none !important;
+    opacity: 0.88 !important;
+}
+/* Choix en cours : liseré doré lumineux. */
+section[data-testid="stSidebar"] [class*="_choose_"] button[data-testid="stBaseButton-primary"] {
+    box-shadow: 0 0 0 2px #f1d68b, 0 0 14px rgba(241, 214, 139, 0.75) !important;
+}
+section[data-testid="stSidebar"] [class*="_choose_"] button p,
+section[data-testid="stSidebar"] [class*="_upgrade_"] button p,
+section[data-testid="stSidebar"] [class*="_advance_age_"] button p { color: inherit !important; }
+
+/* Terminer la phase : sceau rouge, toujours au même endroit. */
+.stApp section[data-testid="stSidebar"] .st-key-lw_end_phase button[data-testid] {
+    background: linear-gradient(180deg, #c0392b 0%, #962018 50%, #6d120c 100%) !important;
+    border: 1px solid #f0a08a !important;
+    color: #fff2ea !important;
+    font-family: "Cinzel", Georgia, serif !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.04em;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -2px 0 rgba(0, 0, 0, 0.4),
+                0 0 0 1px #3a0805, 0 0 16px rgba(192, 57, 43, 0.45), 0 3px 8px rgba(0, 0, 0, 0.6) !important;
+    text-shadow: 0 1px 1px #000 !important;
+}
+.stApp section[data-testid="stSidebar"] .st-key-lw_end_phase button[data-testid]:hover:not(:disabled) { filter: brightness(1.12) !important; }
+.stApp section[data-testid="stSidebar"] .st-key-lw_end_phase button[data-testid]:disabled { filter: grayscale(0.6) brightness(0.7) !important; }
+.st-key-lw_end_phase button p { color: inherit !important; }
+</style>
+"""
+
+
+# --- Rappel de la phase sur le plateau : cartouche de cuir et d'or.
+
+PHASE_BADGE_CSS = PHASE_BADGE_CSS.replace(
+    """    background: rgba(15, 23, 42, 0.62);
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: 0.2px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);""",
+    """    background: linear-gradient(180deg, rgba(52, 36, 20, 0.93), rgba(22, 15, 9, 0.93));
+    border: 1px solid #d9b45f;
+    color: #f6e4b8;
+    font-family: "Cinzel", Georgia, serif;
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: 0.05em;
+    text-shadow: 0 1px 1px #000;
+    box-shadow: inset 0 1px 0 rgba(255, 226, 160, 0.25), 0 0 0 1px #000, 0 3px 10px rgba(0, 0, 0, 0.55);""",
+)
+
+
+# --- Menu principal : affiche de bataille, titre encadré, onglets de mode.
+
+HOME_CSS = """
+<style>
+.stApp {
+    background:
+        linear-gradient(180deg, rgba(8, 5, 3, 0.30) 0%, rgba(8, 5, 3, 0.70) 40%, rgba(8, 5, 3, 0.94) 100%),
+        radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.75) 100%),
+        url("app/static/ui/battle.jpg") center top / cover no-repeat,
+        #0d0906 !important;
+    background-attachment: fixed !important;
+}
+.stApp .block-container { max-width: 1180px !important; padding-top: 2.2rem !important; }
+.lw-hero { text-align: center; margin: 0 auto 1.4rem; max-width: 660px; }
+.lw-hero-frame {
+    position: relative; padding: 14px 26px;
+    background: radial-gradient(ellipse at center, rgba(40, 28, 16, 0.85), rgba(10, 7, 4, 0.92));
+    border: 1px solid #a07c3a; border-radius: 4px;
+    box-shadow: inset 0 0 0 4px #0d0906, inset 0 0 0 5px rgba(217, 180, 95, 0.45),
+                0 0 60px rgba(217, 160, 70, 0.22), 0 18px 50px rgba(0, 0, 0, 0.75);
+}
+.lw-hero-frame::before {
+    content: ""; position: absolute; inset: 3px; pointer-events: none; background: CORNERS;
+}
+.lw-hero-frame img { width: 100%; display: block; border-radius: 2px; }
+.lw-hero-sub {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    margin-top: 16px; font-family: "Cinzel", Georgia, serif; font-size: 15px; font-weight: 700;
+    letter-spacing: 0.32em; text-transform: uppercase; color: #e7cf94; text-shadow: 0 2px 4px #000;
+}
+.lw-hero-sub::before, .lw-hero-sub::after {
+    content: ""; flex: 0 1 140px; height: 1px;
+    background: linear-gradient(90deg, transparent, #d9b45f);
+}
+.lw-hero-sub::after { background: linear-gradient(270deg, transparent, #d9b45f); }
+.lw-hero-sub span { color: #d9b45f; letter-spacing: 0; }
+.st-key-lw_home_tabs [data-testid="stTabs"] [role="tabpanel"] { padding-top: 0 !important; }
+.st-key-lw_home_ai, .st-key-lw_home_online, .st-key-lw_home_local, .st-key-lw_home_codex {
+    border-top-left-radius: 0 !important;
+}
+/* Les fiches et règles du duel local sont regroupées dans le Codex. */
+.st-key-lw_home_local [data-testid="stExpander"] { display: none !important; }
+.st-key-lw_home_local div:has(> [data-testid="stExpander"]) { display: none !important; }
+.lw-home-footer {
+    text-align: center; margin: 2.4rem 0 0.6rem; font-family: "Cinzel", serif; font-size: 12px;
+    letter-spacing: 0.25em; color: #8f7a55; text-transform: uppercase;
+}
+</style>
+""".replace("CORNERS", _LW_CORNERS)
+
+
+# En partie : le ruban rouge du titre, net et lisible.
+LOGO_BANNER = Path(__file__).resolve().parent / "assets" / "logo_ruban.jpg"
+
+_lw_theme_previous_render_logo_header = render_logo_header
+
+
+def render_logo_header(home):
+    if not home:
+        _lw_theme_previous_render_logo_header(home)
+        return
+    title = image_base64(str(LOGO_TITLE)) or image_base64(str(LOGO_FULL))
+    logo = (
+        f'<img src="data:image/jpeg;base64,{title}" alt="The Four Realms">'
+        if title else '<h1 style="margin:.4rem 0">The Four Realms</h1>'
+    )
+    st.markdown(
+        HOME_CSS
+        + '<div class="lw-hero"><div class="lw-hero-frame">' + logo + "</div>"
+        + '<div class="lw-hero-sub"><span>✦</span>Menu principal<span>✦</span></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# Sections du menu principal, chacune rendue seule (sans enchaîner les autres).
+_LW_HOME_LOCAL = _lw_online_previous_render_home
+_LW_HOME_ONLINE = _lw_ai_previous_render_home
+_LW_HOME_AI = _lw_profile_previous_render_home
+_LW_HOME_PROFILE = _lw_pseudo_previous_render_home
+
+
+@contextlib.contextmanager
+def _lw_home_section(next_name):
+    """Neutralise la section suivante de la chaîne et le cadre gris d'origine
+    (le panneau doré le remplace)."""
+    saved_next = globals()[next_name]
+    original_container = st.container
+    first = [True]
+
+    def container(*args, **kwargs):
+        if first[0] and kwargs.get("border") and not kwargs.get("key"):
+            first[0] = False
+            kwargs["border"] = False
+        return original_container(*args, **kwargs)
+
+    globals()[next_name] = lambda: None
+    st.container = container
+    try:
+        yield
+    finally:
+        st.container = original_container
+        globals()[next_name] = saved_next
+
+
+def render_home_codex():
+    st.markdown("### 📜 Codex des royaumes")
+    st.caption("Les fiches des quatre factions et les règles du prototype.")
+    sheet = st.radio(
+        "Faction", list(FACTION_SHEETS), horizontal=True,
+        key="home_codex_sheet", label_visibility="collapsed",
+    )
+    st.image(str(FACTION_SHEETS[sheet]), width="stretch")
+    with st.expander("📖 Règles du prototype"):
+        st.markdown(NOTICE)
+
+
+def render_home_layout():
+    with st.container(key="lw_home_profile"):
+        with _lw_home_section("_lw_profile_previous_render_home"):
+            _LW_HOME_PROFILE()
+    with st.container(key="lw_home_tabs"):
+        ai_tab, online_tab, local_tab, codex_tab = st.tabs([
+            "⚔️ Contre l'IA", "🌐 En ligne", "🛡️ Duel local", "📜 Codex",
+        ])
+        with ai_tab, st.container(key="lw_home_ai"):
+            with _lw_home_section("_lw_ai_previous_render_home"):
+                _LW_HOME_AI()
+        with online_tab, st.container(key="lw_home_online"):
+            with _lw_home_section("_lw_online_previous_render_home"):
+                _LW_HOME_ONLINE()
+        with local_tab, st.container(key="lw_home_local"):
+            st.markdown("### 🛡️ Duel sur ce poste")
+            _LW_HOME_LOCAL()
+        with codex_tab, st.container(key="lw_home_codex"):
+            render_home_codex()
+    st.markdown('<div class="lw-home-footer">✦ The Four Realms ✦</div>', unsafe_allow_html=True)
+
+
+_lw_pseudo_previous_render_home = render_home_layout
 
 
 if __name__ == "__main__":
