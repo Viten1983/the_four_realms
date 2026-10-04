@@ -59,6 +59,7 @@
     try { animatedMoves = new Set(JSON.parse(sessionStorage.getItem("lw_animated_moves") || "[]")); } catch (error) { /* ignoré */ }
     const STEP_MS = 330;
     let pieceGroups = {};
+    let stackLayer = null;  // bulles « ×N » des piles d'ouvriers, devant toutes les pièces
     let offsetX = 0;
     let offsetY = 0;
 
@@ -574,6 +575,12 @@
       addText(group, x, by, label, 11, "#1c1917");
     }
 
+    // Bulle d'une pile d'ouvriers : dans le calque du dessus, pour qu'aucune
+    // pièce voisine ne la cache (sauf pièce cachée pendant une animation).
+    function stackTarget(group, piece) {
+      return stackLayer && !hiddenPieces.has(piece.id) ? stackLayer : group;
+    }
+
     function drawPiece(group, piece, x, y) {
       const selected = piece.id === args.selected_id || (args.selected_ids || []).includes(piece.id);
       const colors = FACTION_COLORS[piece.faction] || FACTION_COLORS[piece.owner === 0 ? 0 : 1];
@@ -607,8 +614,9 @@
       }
       if (piece.stack > 1) {
         // Pile d'ouvriers sur la même case.
-        group.appendChild(svgNode("circle", { class: "token", cx: x + 19, cy: y - 17, r: 9, fill: "#facc15", stroke: "#713f12", "stroke-width": 2 }));
-        addText(group, x + 19, y - 16.5, `×${piece.stack}`, 9, "#1c1917");
+        const top = stackTarget(group, piece);
+        top.appendChild(svgNode("circle", { class: "token", cx: x + 19, cy: y - 17, r: 9, fill: "#facc15", stroke: "#713f12", "stroke-width": 2 }));
+        addText(top, x + 19, y - 16.5, `×${piece.stack}`, 9, "#1c1917");
       }
       lootBadge(group, piece, x, y, 23);
       if (piece.frozen_until_turn && piece.frozen_until_turn >= args.turn) {
@@ -738,8 +746,9 @@
       if (piece.stack > 1) {
         // Pile d'ouvriers sur la même case d'or ou de mana.
         const bx = x + R * 0.92, by = y + 2;
-        group.appendChild(svgNode("circle", { class: "token", cx: bx, cy: by, r: 11, fill: "#facc15", stroke: "#713f12", "stroke-width": 2.2 }));
-        addText(group, bx, by + 0.5, `×${piece.stack}`, 11, "#1c1917");
+        const top = stackTarget(group, piece);
+        top.appendChild(svgNode("circle", { class: "token", cx: bx, cy: by, r: 11, fill: "#facc15", stroke: "#713f12", "stroke-width": 2.2 }));
+        addText(top, bx, by + 0.5, `×${piece.stack}`, 11, "#1c1917");
       }
       lootBadge(group, piece, x, y, R);
       // Points de force en blanc.
@@ -1748,6 +1757,7 @@
       wrapper.classList.toggle("readonly", Boolean(args.readonly));
       board.replaceChildren();
       pieceGroups = {};
+      stackLayer = svgNode("g", { class: "stack-badges", "pointer-events": "none" });
       buildDefs();
 
       const rawCenters = args.cells.map(([q, r]) => rawCenter(q, r));
@@ -1931,6 +1941,7 @@ if (reachable || placed) {
         "stroke-linecap": "round",
         "pointer-events": "none",
       }));
+      board.appendChild(stackLayer);
       drawFxMarks();
       // Calque des animations : conservé d'un rendu à l'autre (une animation
       // en cours continue même si Streamlit redessine le plateau).
