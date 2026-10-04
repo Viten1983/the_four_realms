@@ -4839,21 +4839,20 @@ def render_build_controls(g, view, local=False, on_board=False):
                             and view["players"][owner]["mana"] >= data["mana"]  
                         )  
             
-                        cols = st.columns([3, 1])  
-                        with cols[0]:  
-                            st.write(f"**{upgrade_name}**")  
-                            st.caption(data["effect"])  
-                            st.caption(  
-                                f"{data['cost']} or"  
-                                + (f" · {data['mana']} mana" if data["mana"] else "")  
-                            )  
-                        with cols[1]:  
-                            if st.button(  
-                                "Acheter",  
-                                key=f"{prefix}_upgrade_{upgrade_name}",  
-                                disabled=not affordable,  
-                            ):  
-                                perform(draft_action, purchase_upgrade, upgrade_name)  
+                        # Bouton sous la description, sur toute la largeur.
+                        st.write(f"**{upgrade_name}**")
+                        st.caption(data["effect"])
+                        st.caption(
+                            f"{data['cost']} or"
+                            + (f" · {data['mana']} mana" if data["mana"] else "")
+                        )
+                        if st.button(
+                            "🛒 Acheter",
+                            key=f"{prefix}_upgrade_{upgrade_name}",
+                            disabled=not affordable,
+                            width="stretch",
+                        ):
+                            perform(draft_action, purchase_upgrade, upgrade_name)
   
             if source["wait"]:  
                 st.info("Ce bâtiment n'est pas encore disponible.")  
@@ -9227,8 +9226,9 @@ def render_worker_controls(view, worker, prefix):
             + ("" if is_base else f" · ⚡ immédiat : {int(cost * 1.5)} or")
         )
         limit_hit = building_limit_reached(view, worker["owner"], name)
-        normal_col, fast_col = card.columns(2)
-        if normal_col.button(
+        # L'un sous l'autre, sur toute la largeur (comme chez les Exilés) :
+        # côte à côte, le texte des boutons était coupé.
+        if card.button(
             "🔨 Construire",
             disabled=limit_hit,
             key=f"{prefix}_worker_build_{worker['id']}_{name}",
@@ -9236,7 +9236,7 @@ def render_worker_controls(view, worker, prefix):
             type=build_button_type(name, False),
         ):
             start_build(name, False)
-        if not is_base and fast_col.button(
+        if not is_base and card.button(
             "⚡ Immédiat",
             disabled=limit_hit,
             key=f"{prefix}_worker_fast_{worker['id']}_{name}",
@@ -11353,13 +11353,10 @@ def render_vag_upgrades(view, owner, prefix):
         st.caption("Achetées : " + ", ".join(u for u in owned if UPGRADES[u]["owner"] == VAGABONDS))
     for name in available_upgrades(view, owner):
         data = UPGRADES[name]
-        cols = st.columns([3, 1])
-        with cols[0]:
-            st.write(f"**{name}** · {data['cost']} or" + (f" · {data['mana']} mana" if data["mana"] else ""))
-            st.caption(data["effect"])
-        with cols[1]:
-            if st.button("Acheter", key=f"{prefix}_vag_upgrade_{name}"):
-                perform(draft_action, purchase_upgrade, name)
+        st.write(f"**{name}** · {data['cost']} or" + (f" · {data['mana']} mana" if data["mana"] else ""))
+        st.caption(data["effect"])
+        if st.button("🛒 Acheter", key=f"{prefix}_vag_upgrade_{name}", width="stretch"):
+            perform(draft_action, purchase_upgrade, name)
 
 
 def render_hero_controls(view, hero, prefix):
@@ -12273,13 +12270,10 @@ def render_vag_upgrades(view, owner, prefix):
     for name in available_upgrades(view, owner):
         data = UPGRADES[name]
         locked = name == "Solidarité" and not lost
-        cols = st.columns([3, 1])
-        with cols[0]:
-            st.write(f"**{name}** · {data['cost']} or" + (f" · {data['mana']} mana" if data["mana"] else ""))
-            st.caption(data["effect"] + (" — disponible après la mort d'un héros." if locked else ""))
-        with cols[1]:
-            if st.button("Acheter", key=f"{prefix}_vag_upgrade_{name}", disabled=locked):
-                perform(draft_action, purchase_upgrade, name)
+        st.write(f"**{name}** · {data['cost']} or" + (f" · {data['mana']} mana" if data["mana"] else ""))
+        st.caption(data["effect"] + (" — disponible après la mort d'un héros." if locked else ""))
+        if st.button("🛒 Acheter", key=f"{prefix}_vag_upgrade_{name}", disabled=locked, width="stretch"):
+            perform(draft_action, purchase_upgrade, name)
 
 
 # ============================================================
