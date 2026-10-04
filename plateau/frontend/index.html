@@ -1472,8 +1472,9 @@
       }
     }
 
-    // Exilés : coût de la construction sur chaque case de placement.
-    // De l'autre côté de la ligne noire (×3 + 3 mana) : en surbrillance.
+    // Coût de la construction ou du recrutement sur chaque case de placement
+    // (toutes les factions). Exilés, de l'autre côté de la ligne noire
+    // (×3 + 3 mana) : en surbrillance.
     function drawCellCosts() {
       const costs = args.cell_costs;
       if (!costs) return;

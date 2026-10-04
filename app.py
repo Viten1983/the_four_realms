@@ -18865,6 +18865,58 @@ def can_move(g, unit):
 
 
 # ============================================================
+# COÛT SUR LES CASES DE PLACEMENT (toutes les factions)
+# Construction d'un bâtiment ou d'une base, recrutement d'une unité :
+# chaque case verte affiche ce que coûterait l'action sur cette case
+# (lot complet pour les unités recrutées par 2 ou par 4). Exilés : de
+# l'autre côté de la ligne noire, le surcoût reste en surbrillance.
+# ============================================================
+
+def placement_costs_on_board(g, view, readonly):
+    if readonly or g["phase"] != "build":
+        return None
+    mode = st.session_state.get("ui_plan_mode")
+    name = st.session_state.get("ui_plan_name")
+    if mode not in ("build", "recruit") or not name:
+        return None
+    owner = g["active"]
+    accelerated = bool(st.session_state.get("ui_plan_accelerated"))
+    batch = 1
+    if mode == "recruit":
+        try:
+            batch = max(1, int(recruitment_batch(view, owner, name)))
+        except (ValueError, KeyError, TypeError):
+            batch = 1
+    chosen = {key(tuple(p)) for p in st.session_state.get("ui_plan_positions") or []}
+    exiles = faction_id(view, owner) == EXILES
+    costs = {}
+    for pos in planning_slots(g, view):
+        cell = key(tuple(pos))
+        if cell in chosen:
+            continue
+        positions = [tuple(pos)] * (1 if mode == "build" else batch)
+        try:
+            gold, mana = placement_cost(view, owner, mode, name, positions, accelerated)
+        except (ValueError, KeyError, TypeError):
+            continue
+        if not gold and not mana:
+            continue
+        costs[cell] = {
+            "gold": gold, "mana": mana,
+            "far": mode == "build" and exiles and enemy_side_of_line(owner, tuple(pos)),
+        }
+    return costs or None
+
+
+def render_board(g, view, readonly=False):
+    st.session_state["_lw_cell_costs"] = placement_costs_on_board(g, view, readonly)
+    try:
+        return _lw_cellcost_previous_render_board(g, view, readonly)
+    finally:
+        st.session_state.pop("_lw_cell_costs", None)
+
+
+# ============================================================
 # PSEUDO OBLIGATOIRE
 # Sans pseudo, impossible de lancer, charger ou rejoindre une partie.
 # ============================================================
