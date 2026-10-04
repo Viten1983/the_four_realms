@@ -4472,6 +4472,7 @@ def render_board(g, view, readonly=False):
         banner=st.session_state.get("_lw_victory_banner"),
         cell_costs=st.session_state.get("_lw_cell_costs"),
         phase_banner=st.session_state.get("_lw_phase_banner"),
+        notice=st.session_state.get("_lw_board_notice"),
         key=f"board_component_{st.session_state.ui_board_key}",
         default=None,
     )
@@ -13801,19 +13802,10 @@ def render_airship_controls(g, airship, prefix):
         )
         return
 
-    chosen = st.session_state.get("ui_airship_target")
-    if chosen not in targets:
-        st.caption("Clique sur la base surlignée dont tu veux doubler la prochaine récolte.")
-        return
-    base = targets[chosen]
-    st.info(f"Base choisie : {base['name']} en {coord(base['pos'])}.")
-    if st.button(
-        "💰 Doubler la récolte de cette base au prochain tour",
-        type="primary",
-        key=f"{prefix}_harvest_ok_{airship['id']}_{chosen}",
-    ):
-        st.session_state.ui_airship_target = None
-        perform(game_action, cast_airship_spell, airship["id"], "harvest", chosen)
+    st.caption(
+        "Clique sur une de tes bases surlignées (ou sur sa case d'or ou de mana) : "
+        "sa prochaine récolte est doublée."
+    )
 
 
 _lw_ship_previous_board_event = board_event
@@ -13829,19 +13821,17 @@ def board_event(event, g, view):
         return _lw_ship_previous_board_event(event, g, view)
 
     spell = current_airship_spell(airship)
-    target = next((e for e in airship_targets(g, airship, spell) if tuple(e["pos"]) == pos), None)
+    targets = airship_targets(g, airship, spell)
+    target = next((e for e in targets if tuple(e["pos"]) == pos), None)
+    if target is None and spell == "harvest" and key(pos) in g["resources"]:
+        # Clic sur la case d'or ou de mana : la base voisine qui la récolte.
+        target = next((e for e in targets if distance(tuple(e["pos"]), pos) == 1), None)
     if target is None or target["id"] == airship["id"]:
         return _lw_ship_previous_board_event(event, g, view)
 
     st.session_state.ui_last_event = event["event_id"]
-    if spell == "boost":
-        perform(game_action, cast_airship_spell, airship["id"], "boost", target["id"])
-    st.session_state.ui_airship_target = target["id"]
-    st.session_state.ui_message = (
-        f"{target['name']} choisie : confirme avec le bouton « Doubler la récolte »."
-    )
-    bump_ui()
-    st.rerun()
+    # Le sort part dès le clic (plus de bouton à confirmer dans le menu).
+    perform(game_action, cast_airship_spell, airship["id"], spell, target["id"])
 
 
 _lw_ship_previous_render_board = render_board
@@ -19062,6 +19052,101 @@ _lw_strike_previous_ai_production = ai_production
 
 def ai_production(draft, me, level):
     return _lw_strike_previous_ai_production(ai_hero_strikes(draft, me), me, level)
+
+
+# ============================================================
+# RESSOURCES INSUFFISANTES : MESSAGE SUR LE PLATEAU
+# Construire un bâtiment ou une base, recruter une unité sans assez d'or
+# ou de mana : un message au centre du plateau dit quelle ressource
+# manque, et combien.
+# ============================================================
+
+def missing_resources(player, gold, mana):
+    """[(ressource, manque, coût, disponible)] pour l'or puis le mana."""
+    missing = []
+    if float(player["gold"]) < float(gold):
+        missing.append(("or", float(gold) - float(player["gold"]), float(gold), float(player["gold"])))
+    if float(player["mana"]) < float(mana):
+        missing.append(("mana", float(mana) - float(player["mana"]), float(mana), float(player["mana"])))
+    return missing
+
+
+def missing_resources_lines(missing):
+    return [f"Il manque {miss:g} {kind} (coût {need:g}, tu as {have:g})" for kind, miss, need, have in missing]
+
+
+def missing_resources_title(missing):
+    kinds = {kind for kind, *_ in missing}
+    if kinds == {"or"}:
+        return "💰 Or insuffisant"
+    if kinds == {"mana"}:
+        return "🔮 Mana insuffisant"
+    return "💰🔮 Or et mana insuffisants"
+
+
+_lw_shortage_previous_pay = pay
+
+
+def pay(g, owner, gold, mana=0):
+    missing = missing_resources(g["players"][owner], gold, mana)
+    if missing:
+        raise ValueError(
+            "Ressources insuffisantes : " + " ; ".join(missing_resources_lines(missing)).lower() + "."
+        )
+    return _lw_shortage_previous_pay(g, owner, gold, mana)
+
+
+def board_shortage_notice(g, view, readonly):
+    """Message à afficher sur le plateau, ou None."""
+    revision = st.session_state.get("ui_revision", 0)
+    if not readonly and g["phase"] == "build" and st.session_state.get("ui_plan_mode") in ("build", "recruit"):
+        costs = placement_costs_on_board(g, view, readonly) or {}
+        chosen = [tuple(p) for p in st.session_state.get("ui_plan_positions") or []]
+        price = None
+        if chosen and st.session_state.get("ui_plan_mode") == "build":
+            # Case déjà choisie : son prix (ex. Exilés au-delà de la ligne noire).
+            try:
+                gold, mana = placement_cost(
+                    view, g["active"], "build", st.session_state.get("ui_plan_name"), chosen,
+                    bool(st.session_state.get("ui_plan_accelerated")),
+                )
+                price = {"gold": gold, "mana": mana}
+            except (ValueError, KeyError, TypeError):
+                price = None
+        if price is None and costs:
+            price = min(costs.values(), key=lambda c: (c["gold"], c["mana"]))
+        if price is not None:
+            player = view["players"][g["active"]]
+            missing = missing_resources(player, price["gold"], price["mana"])
+            if missing:
+                name = st.session_state.get("ui_plan_name")
+                return {
+                    "key": f"place:{st.session_state.get('ui_plan_mode')}:{name}:{revision}",
+                    "title": missing_resources_title(missing),
+                    "lines": [f"{name} : impossible pour l'instant"] + missing_resources_lines(missing),
+                }
+    message = str(st.session_state.get("ui_message") or "")
+    if message.startswith("Ressources insuffisantes"):
+        kinds = {"or"} if " or (" in message and " mana (" not in message else (
+            {"mana"} if " mana (" in message and " or (" not in message else {"or", "mana"})
+        detail = message.split(":", 1)[1].strip().rstrip(".") if ":" in message else ""
+        return {
+            "key": f"error:{revision}:{message}",
+            "title": missing_resources_title([(k, 0, 0, 0) for k in kinds]),
+            "lines": [part.strip().capitalize() for part in detail.split(";") if part.strip()],
+        }
+    return None
+
+
+_lw_shortage_previous_render_board = render_board
+
+
+def render_board(g, view, readonly=False):
+    st.session_state["_lw_board_notice"] = board_shortage_notice(g, view, readonly)
+    try:
+        return _lw_shortage_previous_render_board(g, view, readonly)
+    finally:
+        st.session_state.pop("_lw_board_notice", None)
 
 
 # ============================================================
