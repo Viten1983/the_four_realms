@@ -18917,6 +18917,71 @@ def render_board(g, view, readonly=False):
 
 
 # ============================================================
+# IA VAGABONDS : LES HÉROS CONTRE-ATTAQUENT EN PRODUCTION
+# Avant de bouger, chaque héros capable d'attaquer frappe la meilleure
+# cible à sa portée : en priorité les tireurs (Archer, Elfe…) et les
+# volants (pour Campbell, qui tire) qui le harcèlent. Jamais s'il finit
+# sur une case où les ennemis pourraient le détruire.
+# ============================================================
+
+AI_HERO_STRIKE_MIN = 150.0      # gain minimal (équivalent or) pour frapper
+AI_HERO_HARASSER_BONUS = 300.0  # prime contre un tireur ou un volant
+AI_HERO_DANGER_COST = 150.0     # par PF ennemi capable de l'atteindre ensuite
+
+
+def ai_hero_strike_value(g, target, damage):
+    value = ai_piece_value(g, target)
+    pf = float(target["pf"])
+    gain = value if damage >= pf else 0.6 * value * damage / max(pf, 1.0)
+    if target["kind"] == "unit" and (UNITS.get(target["name"], {}).get("range", 0) > 0 or is_flying(target)):
+        gain += AI_HERO_HARASSER_BONUS
+    return gain
+
+
+def ai_hero_strikes(g, me):
+    if not is_vagabond(g, me):
+        return g
+    heroes = sorted(
+        (e for e in g["entities"] if e["owner"] == me and is_hero(e) and hero_can_attack(e)),
+        key=lambda h: (-float(h["pf"]), h["id"]),
+    )
+    for hero in heroes:
+        current = next((e for e in g["entities"] if e["id"] == hero["id"]), None)
+        if current is None:
+            continue
+        try:
+            plan = hero_attack_plan(g, current)
+        except AI_ERRORS:
+            continue
+        damage = float(hero_stats(g, current)[0])
+        best = None
+        for target_id in plan:
+            target = next((e for e in g["entities"] if e["id"] == target_id), None)
+            if target is None:
+                continue
+            new = ai_try(g, set_hero_attack, me, current["id"], target_id)
+            if new is None:
+                continue
+            moved = next(e for e in new["entities"] if e["id"] == current["id"])
+            danger = ai_hero_danger(new, me, tuple(moved["pos"]))
+            if danger >= float(moved["pf"]):
+                continue  # un héros perdu vaut une base perdue
+            score = ai_hero_strike_value(g, target, damage) - AI_HERO_DANGER_COST * danger
+            if score > AI_HERO_STRIKE_MIN and (best is None or score > best[0]):
+                best = (score, new)
+        if best is not None:
+            g = best[1]
+    return g
+
+
+_lw_strike_previous_ai_production = ai_production
+
+
+def ai_production(draft, me, level):
+    return _lw_strike_previous_ai_production(ai_hero_strikes(draft, me), me, level)
+
+
+# ============================================================
 # PSEUDO OBLIGATOIRE
 # Sans pseudo, impossible de lancer, charger ou rejoindre une partie.
 # ============================================================
