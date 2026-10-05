@@ -4782,6 +4782,8 @@ def render_build_controls(g, view, local=False, on_board=False):
                             + building_limit_text(view, owner, name)
                             + ("" if is_base else f" · ⚡ immédiat : {int(data['cost'] * 1.5)} or")
                         )    
+                        # Ce que le bâtiment permettra de recruter, âge par âge.
+                        st.caption(building_summary(view, {"owner": owner, "name": name, "kind": "base" if is_base else "building"}))
   
                         # Deux façons de construire : normale, ou accélérée (+50 %).
                         limit_hit = building_limit_reached(view, owner, name)
@@ -9223,6 +9225,8 @@ def render_worker_controls(view, worker, prefix):
             f"{cost} or · {pf:g} PF · " + building_limit_text(view, worker["owner"], name)
             + ("" if is_base else f" · ⚡ immédiat : {int(cost * 1.5)} or")
         )
+        # Ce que le bâtiment permettra de recruter, âge par âge.
+        card.caption(building_summary(view, {"owner": worker["owner"], "name": name, "kind": "base" if is_base else "building"}))
         limit_hit = building_limit_reached(view, worker["owner"], name)
         # L'un sous l'autre, sur toute la largeur (comme chez les Exilés) :
         # côte à côte, le texte des boutons était coupé.
