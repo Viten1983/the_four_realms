@@ -913,6 +913,23 @@
       layer.appendChild(svgNode("polygon", { points: head, fill: color, opacity: 0.95 }));
     }
 
+    // Étiquette « ☠ … par … » : 10 secondes après son apparition, puis
+    // seules la case rouge et la croix restent.
+    const DEATH_LABEL_MS = 10000;
+    let deathSeen = {};
+    try { deathSeen = JSON.parse(sessionStorage.getItem("lw_death_seen") || "{}"); } catch (error) { /* ignoré */ }
+    let deathTimer = null;
+    function deathLabelLeft(seq) {
+      const id = `${fxGameId()}:${seq}`;
+      if (!(id in deathSeen)) {
+        deathSeen[id] = Date.now();
+        const recent = Object.entries(deathSeen).sort((a, b) => b[1] - a[1]).slice(0, 200);
+        deathSeen = Object.fromEntries(recent);
+        try { sessionStorage.setItem("lw_death_seen", JSON.stringify(deathSeen)); } catch (error) { /* ignoré */ }
+      }
+      return DEATH_LABEL_MS - (Date.now() - deathSeen[id]);
+    }
+
     // Morts du dernier tour : case rouge et croix, effacées au tour suivant.
     function drawDeaths(layer) {
       const seen = new Set();
@@ -925,11 +942,17 @@
         layer.appendChild(svgNode("polygon", { points: hexPoints(c.x, c.y, SIZE - 2), fill: "#ef4444", "fill-opacity": 0.22, stroke: "#dc2626", "stroke-width": 4 }));
         const r = 15;
         layer.appendChild(svgNode("path", { d: `M${c.x - r} ${c.y - r} L${c.x + r} ${c.y + r} M${c.x + r} ${c.y - r} L${c.x - r} ${c.y + r}`, stroke: "#dc2626", "stroke-width": 6, "stroke-linecap": "round", opacity: 0.75 }));
-        // La pièce détruite et celui qui l'a abattue.
-        if (death.name) {
+        // La pièce détruite et celui qui l'a abattue : en haut de la case,
+        // pour ne pas cacher les PF (écrits en bas) de la pièce qui s'y
+        // trouve, et seulement 10 secondes.
+        const left = death.name ? deathLabelLeft(death.seq) : 0;
+        if (left > 0 && !deathTimer) {
+          deathTimer = setTimeout(() => { deathTimer = null; if (args) render(args); }, left + 50);
+        }
+        if (death.name && left > 0) {
           const lines = [`☠ ${death.name}`].concat(death.killer ? [`par ${death.killer}`] : []);
           const w = Math.max(...lines.map(t => t.length)) * 6.2 + 12, h = lines.length * 12 + 6;
-          const y0 = c.y + SIZE * 0.32;
+          const y0 = c.y - SIZE * 0.86;
           layer.appendChild(svgNode("rect", { x: c.x - w / 2, y: y0, width: w, height: h, rx: 6, fill: "rgba(127,29,29,0.92)", stroke: "#fecaca", "stroke-width": 1.2 }));
           lines.forEach((t, i) => layer.appendChild(svgNode("text", {
             x: c.x, y: y0 + 9.5 + i * 12, "text-anchor": "middle", "dominant-baseline": "middle",
@@ -987,12 +1010,7 @@
         // montrés que pendant l'animation. Seules les morts restent
         // marquées (case rouge et croix, drawDeaths) pendant un tour.
       });
-      numbers.forEach((list, k) => {
-        const [q, r] = k.split(",").map(Number);
-        const c = center(q, r);
-        // Coin haut gauche de la case (la gauche de la pièce porte les PF).
-        list.forEach((item, i) => numberBadge(badges, c.x - SIZE * 0.62 + i * 23, c.y - SIZE * 0.78, item.n, item.ink));
-      });
+      // (Plus de bulles numérotées : le journal sous le plateau suffit.)
       board.appendChild(lines);
       board.appendChild(badges);
     }
@@ -1697,10 +1715,11 @@
         const top = r && r.height ? r.bottom + 8 : 110;
         const left = r && r.height ? r.left : 24;
         pop.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:2147482000;pointer-events:none;`
-          + "padding:8px 18px;border-radius:12px;background:linear-gradient(180deg,#facc15,#d97706);"
-          + "color:#1c1917;font-weight:900;font-size:18px;border:2px solid #fde68a;"
+          + "padding:8px 20px;border-radius:10px;background:linear-gradient(180deg,#3a2a12,#1c1408);"
+          + "color:#fde68a;font-weight:900;font-size:18px;letter-spacing:0.04em;border:2px solid #e7b93e;"
+          + "font-family:Cinzel,Georgia,'Times New Roman',serif;"
           + "box-shadow:0 6px 18px rgba(0,0,0,0.45);opacity:0;transform:translateY(-6px);"
-          + "transition:opacity 160ms ease,transform 160ms ease;font-family:inherit;";
+          + "transition:opacity 160ms ease,transform 160ms ease;";
         pop.textContent = info.text + (info.sub ? ` — ${info.sub}` : "");
         doc.body.appendChild(pop);
         requestAnimationFrame(() => { pop.style.opacity = "1"; pop.style.transform = "translateY(0)"; });
@@ -1752,18 +1771,93 @@
     function showPhaseAnnounce(info) {
       announceUntil = performance.now() + 2250;
       lockPageDuring(2250);
-      const layer = svgNode("g", { "pointer-events": "none" });
-      const w = baseW * 0.62, h = Math.max(110, baseH * 0.14);
-      // Au centre de la partie du plateau visible à l'écran.
-      const mid = visibleBoardCenter();
-      const x = mid.x - w / 2, y = mid.y - h / 2;
       const build = String(info.text).includes("production");
-      layer.appendChild(svgNode("rect", { x, y, width: w, height: h, rx: 22, fill: build ? "rgba(21,128,61,0.88)" : "rgba(185,28,28,0.88)", stroke: "#facc15", "stroke-width": 6 }));
-      layer.appendChild(svgNode("text", { x: baseW / 2, y: y + h * 0.42, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": h * 0.38, "font-weight": 900, fill: "#ffffff", stroke: "rgba(0,0,0,0.55)", "stroke-width": 5, "paint-order": "stroke" }, info.text));
-      layer.appendChild(svgNode("text", { x: baseW / 2, y: y + h * 0.78, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": h * 0.2, "font-weight": 800, fill: "#fde68a" }, `Tour ${info.turn}`));
+      const theme = build
+        ? { dark: "#052e1a", mid: "#166534", light: "#22c55e", icon: "⚒" }
+        : { dark: "#3b0a0a", mid: "#991b1b", light: "#ef4444", icon: "⚔" };
+      const uid = `ann${Math.floor(performance.now())}`;
+      const layer = svgNode("g", { "pointer-events": "none", opacity: 0 });
+      const mid = visibleBoardCenter();
+      const w = Math.min(baseW * 0.7, 760), h = Math.max(96, Math.min(baseH * 0.13, 130));
+      const x = mid.x - w / 2, y = mid.y - h / 2;
+      const serif = "Cinzel, 'Trajan Pro', Georgia, 'Times New Roman', serif";
+
+      const defs = svgNode("defs", {});
+      const gradient = (id, x2, y2, stops) => {
+        const node = svgNode("linearGradient", { id, x1: 0, y1: 0, x2, y2 });
+        stops.forEach(([offset, color, alpha]) => node.appendChild(svgNode("stop", { offset, "stop-color": color, "stop-opacity": alpha === undefined ? 1 : alpha })));
+        defs.appendChild(node);
+      };
+      gradient(`${uid}p`, 0, 1, [[0, theme.light], [0.45, theme.mid], [1, theme.dark]]);
+      gradient(`${uid}g`, 0, 1, [[0, "#fff7c2"], [0.5, "#e7b93e"], [1, "#8a5a12"]]);
+      gradient(`${uid}b`, 1, 0, [[0, "#000000", 0], [0.18, "#000000", 0.55], [0.82, "#000000", 0.55], [1, "#000000", 0]]);
+      gradient(`${uid}s`, 1, 0, [[0, "#ffffff", 0], [0.5, "#ffffff", 0.55], [1, "#ffffff", 0]]);
+      const clip = svgNode("clipPath", { id: `${uid}c` });
+      clip.appendChild(svgNode("rect", { x, y, width: w, height: h, rx: 10 }));
+      defs.appendChild(clip);
+      layer.appendChild(defs);
+
+      // Bande sombre, fondue sur les côtés, en travers du plateau.
+      layer.appendChild(svgNode("rect", { x: mid.x - baseW / 2, y: y - h * 0.35, width: baseW, height: h * 1.7, fill: `url(#${uid}b)` }));
+      // Liserés dorés qui prolongent la plaque.
+      [y - h * 0.22, y + h * 1.22].forEach(ly => layer.appendChild(svgNode("line", {
+        x1: x - w * 0.18, y1: ly, x2: x + w * 1.18, y2: ly, stroke: "#e7b93e", "stroke-width": 2, opacity: 0.75,
+      })));
+
+      // Queues d'aronde du ruban, derrière la plaque.
+      const tail = h * 0.62, drop = h * 0.16;
+      [-1, 1].forEach(side => {
+        const ox = side < 0 ? x + 14 : x + w - 14;
+        const tx = ox + side * tail;
+        layer.appendChild(svgNode("polygon", {
+          points: `${ox},${y + drop} ${tx},${y + drop} ${tx - side * tail * 0.38},${y + h / 2 + drop} ${tx},${y + h + drop} ${ox},${y + h + drop}`,
+          fill: theme.dark, stroke: "#e7b93e", "stroke-width": 3, "stroke-linejoin": "round",
+        }));
+      });
+
+      // Plaque principale, double cadre doré.
+      layer.appendChild(svgNode("rect", { x: x + 3, y: y + 6, width: w, height: h, rx: 10, fill: "#000000", opacity: 0.45 }));
+      layer.appendChild(svgNode("rect", { x, y, width: w, height: h, rx: 10, fill: `url(#${uid}p)`, stroke: `url(#${uid}g)`, "stroke-width": 5 }));
+      layer.appendChild(svgNode("rect", { x: x + 9, y: y + 9, width: w - 18, height: h - 18, rx: 6, fill: "none", stroke: "#fde68a", "stroke-width": 1.4, opacity: 0.7 }));
+
+      // Reflet qui balaie la plaque.
+      const shineGroup = svgNode("g", { "clip-path": `url(#${uid}c)` });
+      const sweep = svgNode("polygon", { points: "", fill: `url(#${uid}s)` });
+      const placeSweep = sx => sweep.setAttribute("points", `${sx},${y} ${sx + w * 0.22},${y} ${sx + w * 0.12},${y + h} ${sx - w * 0.1},${y + h}`);
+      placeSweep(x - w * 0.4);
+      shineGroup.appendChild(sweep);
+      layer.appendChild(shineGroup);
+
+      // Médaillon de la phase.
+      const mx = x + h * 0.62, r = h * 0.38;
+      layer.appendChild(svgNode("circle", { cx: mx, cy: mid.y, r: r + 4, fill: `url(#${uid}g)` }));
+      layer.appendChild(svgNode("circle", { cx: mx, cy: mid.y, r, fill: theme.dark, stroke: "#fde68a", "stroke-width": 1.5 }));
+      layer.appendChild(svgNode("text", { x: mx, y: mid.y + r * 0.06, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": r * 1.15, fill: "#fde68a" }, theme.icon));
+
+      // Titre et numéro du tour.
+      const tx = mx + r + (x + w - mx - r) / 2;
+      const title = String(info.text).toUpperCase();
+      const size = Math.min(h * 0.34, ((x + w - mx - r) * 0.9) / (title.length * 0.72));
+      layer.appendChild(svgNode("text", {
+        x: tx, y: y + h * 0.43, "text-anchor": "middle", "dominant-baseline": "middle",
+        "font-family": serif, "font-size": size, "font-weight": 900, "letter-spacing": size * 0.06,
+        fill: "#ffffff", stroke: "rgba(0,0,0,0.6)", "stroke-width": 4, "paint-order": "stroke",
+      }, title));
+      layer.appendChild(svgNode("text", {
+        x: tx, y: y + h * 0.77, "text-anchor": "middle", "dominant-baseline": "middle",
+        "font-family": serif, "font-size": h * 0.17, "font-weight": 800, "letter-spacing": h * 0.03, fill: "#fde68a",
+      }, `— TOUR ${info.turn} —`));
+
       fxLayer.appendChild(layer);
-      tween(250, t => layer.setAttribute("opacity", String(t)), () => {
-        setTimeout(() => tween(450, t => layer.setAttribute("opacity", String(1 - t)), () => layer.remove()), 1550);
+      // Entrée en léger zoom, reflet, puis sortie en fondu.
+      tween(320, t => {
+        const e = easeOut(t), k = 0.86 + 0.14 * e;
+        layer.setAttribute("opacity", String(e));
+        layer.setAttribute("transform", `translate(${mid.x * (1 - k)},${mid.y * (1 - k)}) scale(${k})`);
+      }, () => {
+        layer.removeAttribute("transform");
+        tween(900, t => placeSweep(x - w * 0.4 + w * 1.7 * easeOut(t)));
+        setTimeout(() => tween(450, t => layer.setAttribute("opacity", String(1 - t)), () => layer.remove()), 1450);
       });
     }
 

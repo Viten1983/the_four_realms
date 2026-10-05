@@ -17703,8 +17703,7 @@ def render_journal(bundle, g, viewer, recent):
         body = '<div class="lw-j-empty">Aucune action pour l\'instant.</div>'
     st.markdown(
         style
-        + '<div class="lw-journal"><h4>📜 Journal de bord — une ligne par action '
-        + '<span style="font-weight:400;font-size:12px;color:#78716c">(les numéros renvoient au plateau)</span></h4>'
+        + '<div class="lw-journal"><h4>📜 Journal de bord — une ligne par action</h4>'
         + body + "</div>",
         unsafe_allow_html=True,
     )
@@ -18890,12 +18889,6 @@ def render_phase_badge(g, view=None):
         clock = f' · ⏱️ <span class="lw-clock" data-start="{seconds}">{seconds // 60:02d}:{seconds % 60:02d}</span>'
         clock_css = LW_CLOCK_CSS.replace("SECONDS", str(seconds))
     lines = [f"Tour {g['turn']}, {label}", next_moves, money, bases + clock]
-    # Rappel permanent, tant que c'est à ce joueur d'agir.
-    your_turn = g.get("winner") is None and g.get("active") == viewer and not (
-        g["phase"] == "build" and viewer in (g.get("ready") or [])
-    )
-    if st.query_params.get("room"):
-        your_turn = your_turn and not online_readonly()
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
@@ -18904,8 +18897,7 @@ def render_phase_badge(g, view=None):
                 f'<span class="lw-badge-line{"" if n == 0 else " lw-badge-sub"}">{line}</span>'
                 for n, line in enumerate(lines)
             )
-            + "</div>"
-            + ('<div class="lw-your-turn">⚔ À TOI DE JOUER</div>' if your_turn else ""),
+            + "</div>",
             unsafe_allow_html=True,
         )
 
