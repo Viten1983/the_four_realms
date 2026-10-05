@@ -21,11 +21,11 @@
     .illustrated .cell:hover .ground { fill: rgba(255, 255, 255, 0.22); stroke: #ffffff; stroke-width: 2.5; }
     .illustrated .cell:focus-visible .ground { stroke: #ffffff; stroke-width: 4; }
     #wrapper { position: relative; }
-    #zoom { position: absolute; top: 14px; right: 14px; z-index: 5; display: flex; gap: 4px; align-items: center; background: rgba(10, 18, 28, 0.72); padding: 4px; border-radius: 9px; }
+    #zoom { position: absolute; top: 14px; right: 14px; z-index: 50; transition: top 90ms linear; display: flex; gap: 4px; align-items: center; background: rgba(10, 18, 28, 0.72); padding: 4px; border-radius: 9px; }
     #zoom button { width: 30px; height: 30px; border: 0; border-radius: 6px; background: #f4efd8; color: #172033; font-size: 18px; font-weight: 900; cursor: pointer; line-height: 1; }
     #zoom button:hover { background: #ffffff; }
     #zoom span { min-width: 42px; text-align: center; color: #f4efd8; font-size: 12px; font-weight: 800; }
-    #board.zoomed { cursor: grab; }
+    #board.zoomed, #board.pannable { cursor: grab; }
     #board.dragging, #board.dragging .cell { cursor: grabbing; }
   </style>
 </head>
@@ -223,21 +223,53 @@
     document.getElementById("zoom-out").addEventListener("click", () => zoomAt(1 / 1.25));
     document.getElementById("zoom-reset").addEventListener("click", () => { zoom = 1; viewX = 0; viewY = 0; applyView(); });
 
+    // Conteneur qui fait défiler la page Streamlit (autour du plateau).
+    function pageScroller() {
+      try {
+        let node = window.frameElement && window.frameElement.parentElement;
+        while (node && node !== window.parent.document.documentElement) {
+          const style = window.parent.getComputedStyle(node);
+          if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 2) return node;
+          node = node.parentElement;
+        }
+        return window.parent.document.scrollingElement || window.parent.document.documentElement;
+      } catch (error) {
+        return null;
+      }
+    }
+
     let drag = null;
     let suppressClick = false;
     board.addEventListener("pointerdown", event => {
-      if (event.button !== 0 || zoom <= 1.001) return;
-      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, viewX, viewY, moved: false };
+      if (event.button !== 0) return;
+      if (zoom > 1.001) {
+        drag = { id: event.pointerId, x: event.clientX, y: event.clientY, viewX, viewY, moved: false };
+        return;
+      }
+      // Vue entière : glisser la souris fait défiler la page sur le plateau.
+      // Coordonnées écran : le cadre du plateau bouge avec la page.
+      if (event.pointerType !== "mouse") return;
+      const scroller = pageScroller();
+      if (!scroller) return;
+      drag = {
+        id: event.pointerId, page: scroller, x: event.screenX, y: event.screenY,
+        top: scroller.scrollTop, left: scroller.scrollLeft, moved: false,
+      };
     });
     board.addEventListener("pointermove", event => {
       if (!drag || event.pointerId !== drag.id) return;
-      const dx = event.clientX - drag.x;
-      const dy = event.clientY - drag.y;
+      const dx = (drag.page ? event.screenX : event.clientX) - drag.x;
+      const dy = (drag.page ? event.screenY : event.clientY) - drag.y;
       if (!drag.moved && Math.hypot(dx, dy) < 6) return;
       if (!drag.moved) {
         drag.moved = true;
         board.classList.add("dragging");
         board.setPointerCapture(event.pointerId);
+      }
+      if (drag.page) {
+        drag.page.scrollTop = drag.top - dy;
+        drag.page.scrollLeft = drag.left - dx;
+        return;
       }
       const rect = board.getBoundingClientRect();
       viewX = drag.viewX - dx * (baseW / zoom) / rect.width;
@@ -259,6 +291,32 @@
     board.addEventListener("click", event => {
       if (suppressClick) { event.stopPropagation(); event.preventDefault(); suppressClick = false; }
     }, true);
+    board.classList.add("pannable");
+
+    // Boutons de zoom collés en haut de l'écran pendant le défilement
+    // (comme le bandeau de phase) : toujours à portée de main.
+    const zoomBox = document.getElementById("zoom");
+    const ZOOM_MARGIN = 14, ZOOM_TOP = 72;  // sous l'en-tête de Streamlit
+    function stickZoom() {
+      try {
+        const frame = window.frameElement;
+        if (!frame) return;
+        const r = frame.getBoundingClientRect();
+        const max = wrapper.offsetHeight - zoomBox.offsetHeight - ZOOM_MARGIN;
+        zoomBox.style.top = `${Math.round(clamp(ZOOM_TOP - r.top, ZOOM_MARGIN, Math.max(ZOOM_MARGIN, max)))}px`;
+      } catch (error) { /* page parente inaccessible : bouton fixe */ }
+    }
+    try {
+      window.parent.document.addEventListener("scroll", stickZoom, true);
+      window.parent.addEventListener("resize", stickZoom);
+      window.addEventListener("pagehide", () => {
+        try {
+          window.parent.document.removeEventListener("scroll", stickZoom, true);
+          window.parent.removeEventListener("resize", stickZoom);
+        } catch (error) { /* ignoré */ }
+      });
+    } catch (error) { /* ignoré */ }
+    setTimeout(stickZoom, 300);
 
     function sendToStreamlit(type, extra = {}) {
       window.parent.postMessage({ isStreamlitMessage: true, type, ...extra }, "*");

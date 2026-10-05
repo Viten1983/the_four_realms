@@ -5963,9 +5963,9 @@ def main():
             "Cases rouges : cible ennemie accessible · "  
             "Pièce grise : action déjà effectuée · "
             "Attente N : pièce disponible dans N fins de tour · "
-            "Numéros sur le plateau : combats du journal de bord · "
             "Case rouge et « −N PF » : dégâts subis · "
-            "Rond vert : unité recrutée · Rond orange : bâtiment ou base construit"
+            "Rond vert : unité recrutée · Rond orange : bâtiment ou base construit · "
+            "Glisser avec la souris : fait défiler le plateau"
         )  
   
     with st.container(key="lw_page_log"):  
