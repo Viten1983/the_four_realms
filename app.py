@@ -18040,6 +18040,10 @@ for _name, _data in UNITS.items():
     _data["limit"] = raised_limit(_data["limit"], _data.get("batch", 1))
 WORKER_LIMIT = raised_limit(WORKER_LIMIT)
 UNITS[WORKER]["limit"] = WORKER_LIMIT
+# Héros nommés : un seul Daeron et un seul Finwe, jamais un 3ᵉ elfe.
+UNITS[ELF_HEROES]["limit"] = len(ELF_HERO_NAMES)
+for _hero_name in ELF_HERO_NAMES:
+    UNITS[_hero_name]["limit"] = 1
 
 
 # ============================================================
