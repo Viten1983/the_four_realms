@@ -18801,16 +18801,17 @@ div:has(> .st-key-lw_phase_badge) {
     display: block;
     width: fit-content;
     clear: both;
-    margin: 6px 0 0 10px;
-    padding: 5px 14px;
-    border-radius: 9px;
-    background: rgba(21, 128, 61, 0.95);
-    border: 2px solid #86efac;
-    color: #ffffff;
+    margin: 8px 0 0 10px;
+    padding: 8px 18px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #facc15, #d97706);
+    border: 2px solid #fde68a;
+    color: #1c1917;
     font-weight: 900;
-    font-size: 14px;
-    letter-spacing: 0.04em;
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+    font-size: 17px;
+    letter-spacing: 0.02em;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    white-space: nowrap;
     animation: lw-your-turn-pulse 1.8s ease-in-out infinite;
 }
 @keyframes lw-your-turn-pulse {
@@ -18893,6 +18894,8 @@ def render_phase_badge(g, view=None):
         clock = f' · ⏱️ <span class="lw-clock" data-start="{seconds}">{seconds // 60:02d}:{seconds % 60:02d}</span>'
         clock_css = LW_CLOCK_CSS.replace("SECONDS", str(seconds))
     lines = [f"Tour {g['turn']}, {label}", next_moves, money, bases + clock]
+    # Rappel « à vous de jouer » (calculé par render_board).
+    your_turn = st.session_state.get("_lw_your_turn")
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
@@ -18901,7 +18904,8 @@ def render_phase_badge(g, view=None):
                 f'<span class="lw-badge-line{"" if n == 0 else " lw-badge-sub"}">{line}</span>'
                 for n, line in enumerate(lines)
             )
-            + "</div>",
+            + "</div>"
+            + (f'<div class="lw-your-turn">{escape(your_turn)}</div>' if your_turn else ""),
             unsafe_allow_html=True,
         )
 
@@ -20132,17 +20136,22 @@ def render_board(g, view, readonly=False):
     previous = st.session_state.get("_lw_turn_state")
     st.session_state["_lw_turn_state"] = state
     playing = g.get("winner") is None and not g.get("curtain") and not readonly and g["active"] == viewer
-    if playing and previous != state:
-        count = int(st.session_state.get("_lw_turn_pop_count", 0)) + 1
-        st.session_state["_lw_turn_pop_count"] = count
-        local = ai_config(bundle) is None and room is None
-        st.session_state["_lw_turn_pop"] = {
-            "key": f"{game_id}:{count}:{int(time.time() * 1000)}",
-            "text": "🎯 C'est à vous de jouer !",
-            "sub": faction_of(g, g["active"])["name"] if local else "",
-        }
-    elif not playing:
-        st.session_state["_lw_turn_pop"] = None
+    local = ai_config(bundle) is None and room is None
+    # Production contre l'IA ou en ligne : les deux joueurs produisent en
+    # même temps, c'est à nous tant que notre production n'est pas validée.
+    if g["phase"] == "build" and not local:
+        playing = g.get("winner") is None and not g.get("curtain") and not readonly
+    if g["phase"] == "build" and viewer in (g.get("ready") or []):
+        playing = False
+    if room is not None and online_readonly():
+        playing = False
+    # Bandeau orange permanent sous le bandeau du plateau (render_phase_badge),
+    # tant que c'est au joueur de cet écran : plus de pop éphémère.
+    st.session_state["_lw_your_turn"] = (
+        "🎯 C'est à vous de jouer !" + (f" — {faction_of(g, g['active'])['name']}" if local else "")
+        if playing else None
+    )
+    st.session_state["_lw_turn_pop"] = None
     return _lw_turnpop_previous_render_board(g, view, readonly)
 
 
