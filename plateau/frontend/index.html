@@ -1222,8 +1222,13 @@
       const combined = ev.kind === "melee" && dealt > 0 && taken > 0;
       // Force de frappe complète de l'attaquant (pas seulement les PF perdus).
       const full = ev.dealt ? Number(ev.dealt) : dealt;
+      // Case attaquée : elle porte le résumé « infligés | subis ». Les autres
+      // cases touchées (dégâts de zone) gardent leur propre « −N PF ».
+      const target = combined
+        ? ((ev.shots && ev.shots[0] && ev.shots[0].to) || ev.hits.find(h => h.owner !== ev.owner).pos)
+        : null;
+      const onTarget = pos => target && pos && pos[0] === target[0] && pos[1] === target[1];
       if (combined) {
-        const target = (ev.shots && ev.shots[0] && ev.shots[0].to) || ev.hits.find(h => h.owner !== ev.owner).pos;
         floatSegments(pt(target), [
           { text: `−${pfNumber(full)} PF`, color: PF_DEALT },
           { text: "  |  ", color: "#111827" },
@@ -1233,7 +1238,7 @@
       (ev.hits || []).forEach((hit, i) => {
         const c = pt(hit.pos);
         if (hit.damage) {
-          if (!combined) {
+          if (!combined || !onTarget(hit.pos)) {
             const label = hitLabel(hit, ev);
             if (ev.dealt && hit.id === ev.target_id && hit.owner !== ev.owner) {
               label.text = `−${pfNumber(Number(ev.dealt))} PF`;
