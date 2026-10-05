@@ -117,10 +117,10 @@ UPGRADES = {
         "age": 1,  
         "effect": "+0,5 PF de dégâts à l’unité qui tue l’unité. L’attaquant est immobilisé 1 tour supplémentaire.",  
     },  
-    "Développement musculaire": {  
-        "owner": 1,  
-        "cost": 300,  
-        "mana": 0,  
+    "Développement musculaire": {
+        "owner": 1,
+        "cost": 700,
+        "mana": 3,
         "building": "Marché",  
         "age": 3,  
         "effect": "+3 PF pour les Mammouths domptés.",  
