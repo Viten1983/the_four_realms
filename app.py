@@ -5899,6 +5899,8 @@ def main():
         if message:  
             st.warning(message)  
   
+    render_general_info(bundle)
+
     with st.container(key="lw_page_phase"):  
         if finished:  
             if g["winner"] == -1:
@@ -13585,9 +13587,20 @@ def render_online_waiting(room, seat):
     st.markdown(CSS, unsafe_allow_html=True)
     render_logo_header(home=False)
     g = room["bundle"]["game"]
+    draft = room["drafts"][seat] or g
+    # Le menu de gauche reste en place pendant l'attente : on garde sous les
+    # yeux ses pièces et sa production, au lieu d'un plateau en pleine page.
+    waiting = dict(room["bundle"])
+    waiting["game"] = g
+    waiting["draft"] = room["drafts"][seat]
+    waiting["committed"] = None
+    st.session_state["_lw_waiting_opponent"] = True
+    try:
+        render_sidebar(waiting)
+    finally:
+        st.session_state.pop("_lw_waiting_opponent", None)
     st.subheader(f"Tour {turn_label(g)} — Production validée")
     st.info(f"⏳ Ta production est validée. En attente de l'adversaire ({online_turn_label(room)} maximum)…")
-    draft = room["drafts"][seat] or g
     render_board(g, draft, readonly=True)
 
 
@@ -18619,45 +18632,17 @@ def render_sidebar(bundle):
     with st.sidebar:
         st.markdown(SIDEBAR_CSS, unsafe_allow_html=True)
 
-        # 1. Informations générales
-        with st.container(border=True, key="lw_side_info"):
-            st.markdown("### ℹ️ Informations générales")
-            if ai_config(bundle) is not None:
-                st.markdown(f"🤖 **Adversaire** : IA — {ai_label(bundle)}")
-            phase = "🛠️ Production" if g["phase"] == "build" else "⚔️ Manœuvres"
-            st.markdown(f"**Tour {g['turn']}** · {phase}")
-            if g["winner"] is None:
-                st.caption(f"Joueur actif : {faction_of(g, g['active'])['name']}")
-            if g.get("victory_mode") == "bases":
-                st.markdown("🏰 **Victoire** : 3 bases ennemies détruites")
-                st.caption(" · ".join(
-                    f"{faction_of(g, owner)['name']} : {g['players'][owner]['bases']}/3" for owner in (0, 1)
-                ))
-            else:
-                st.markdown("⏱️ **Victoire** : meilleur score en PV à la fin du temps")
-                seconds = max(0, math.ceil(g["remaining"]))
-                st.caption(f"Temps restant : {seconds // 60:02d}:{seconds % 60:02d}")
-                st.button("Actualiser le chronomètre", key="refresh_clock")
-            with st.expander("📖 Fiches des factions", expanded=False):
-                render_faction_sheet_menu("sidebar")
-            with st.expander("💾 Sauvegarde et retour à l'accueil", expanded=False):
-                st.download_button(
-                    "Sauvegarder",
-                    data=json.dumps(bundle, ensure_ascii=False, indent=2, allow_nan=False),
-                    file_name="the_four_realms.json",
-                    mime="application/json",
-                    key="download_save",
-                )
-                st.caption("La sauvegarde contient aussi les planifications privées.")
-                confirm = st.checkbox("Confirmer le retour à l'accueil", key="confirm_home")
-                if st.button("Retour à l'accueil", disabled=not confirm, key="go_home"):
-                    go_home_now()
-            render_forfeit(bundle)
+        # 1. Informations générales : désormais au-dessus du plateau.
 
         # 2. Actions du joueur
         with st.container(border=True, key="lw_side_actions"):
             st.markdown("### 🎮 Actions du joueur")
-            if ai_config(bundle) is not None and not online:
+            waiting = bool(st.session_state.get("_lw_waiting_opponent"))
+            if waiting:
+                # Production déjà validée : aucune commande, juste l'attente.
+                st.info("⏳ Production validée : en attente de l'adversaire.")
+                st.caption("Tu peux revoir tes pièces et ta production en attendant.")
+            if not waiting and ai_config(bundle) is not None and not online:
                 stack = ai_undo_stack()
                 if st.button(
                     "↩️ Annuler mon dernier coup",
@@ -18674,12 +18659,12 @@ def render_sidebar(bundle):
                     go_home_now()
             # Manœuvres : « Terminer l'activation » (jaune) juste au-dessus de
             # « Terminer toutes mes manœuvres », « Confirmer l'attaque » juste en dessous.
-            maneuvers = g["winner"] is None and g["phase"] == "move"
+            maneuvers = g["winner"] is None and g["phase"] == "move" and not waiting
             if maneuvers:
                 _LW_SIDEBAR_SLOTS["activation"] = st.container(key="lw_activation_slot")
             # Terminer la phase : même place, en rouge, en production comme en manœuvres.
             with st.container(key="lw_end_phase"):
-                if g["winner"] is not None:
+                if g["winner"] is not None or waiting:
                     pass
                 elif g["phase"] == "build":
                     if st.button(
@@ -18710,7 +18695,7 @@ def render_sidebar(bundle):
             if maneuvers:
                 st.info = info_in_slot
             try:
-                if g["winner"] is None:
+                if g["winner"] is None and not waiting:
                     if g["phase"] == "build":
                         render_build_controls(g, view, local=True, on_board=False)
                     elif g["phase"] == "move":
@@ -18780,6 +18765,51 @@ div:has(> .st-key-lw_phase_badge) {
 .lw-badge-sub { font-size: 12.5px; opacity: 0.92; }
 </style>
 """
+
+
+def render_general_info(bundle):
+    """Informations générales, en bandeau au-dessus du plateau (elles étaient
+    auparavant dans le menu de gauche)."""
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("game"), dict):
+        return
+    g = bundle["game"]
+    with st.container(border=True, key="lw_top_info"):
+        st.markdown("### ℹ️ Informations générales")
+        left, middle, right = st.columns([2, 2, 3])
+        with left:
+            if ai_config(bundle) is not None:
+                st.markdown(f"🤖 **Adversaire** : IA — {ai_label(bundle)}")
+            phase = "🛠️ Production" if g["phase"] == "build" else "⚔️ Manœuvres"
+            st.markdown(f"**Tour {g['turn']}** · {phase}")
+            if g["winner"] is None:
+                st.caption(f"Joueur actif : {faction_of(g, g['active'])['name']}")
+        with middle:
+            if g.get("victory_mode") == "bases":
+                st.markdown("🏰 **Victoire** : 3 bases ennemies détruites")
+                st.caption(" · ".join(
+                    f"{faction_of(g, owner)['name']} : {g['players'][owner]['bases']}/3" for owner in (0, 1)
+                ))
+            else:
+                st.markdown("⏱️ **Victoire** : meilleur score en PV à la fin du temps")
+                seconds = max(0, math.ceil(g["remaining"]))
+                st.caption(f"Temps restant : {seconds // 60:02d}:{seconds % 60:02d}")
+                st.button("Actualiser le chronomètre", key="refresh_clock")
+        with right:
+            with st.expander("📖 Fiches des factions", expanded=False):
+                render_faction_sheet_menu("top_info")
+            with st.expander("💾 Sauvegarde et retour à l'accueil", expanded=False):
+                st.download_button(
+                    "Sauvegarder",
+                    data=json.dumps(bundle, ensure_ascii=False, indent=2, allow_nan=False),
+                    file_name="the_four_realms.json",
+                    mime="application/json",
+                    key="download_save",
+                )
+                st.caption("La sauvegarde contient aussi les planifications privées.")
+                confirm = st.checkbox("Confirmer le retour à l'accueil", key="confirm_home")
+                if st.button("Retour à l'accueil", disabled=not confirm, key="go_home"):
+                    go_home_now()
+            render_forfeit(bundle)
 
 
 def render_phase_badge(g, view=None):
