@@ -18006,7 +18006,11 @@ _lw_shooter_previous_combat_values = combat_values
 
 def combat_values(attackers, target):
     values = _lw_shooter_previous_combat_values(attackers, target)
-    if not (attackers and melee_only(target) and all(shoots_from_afar(a, target) for a in attackers)):
+    # Une unité de corps à corps ne peut pas toucher une unité volante :
+    # même au contact, elle ne riposte pas contre elle.
+    if not (attackers and melee_only(target) and all(
+        shoots_from_afar(a, target) or (is_flying(a) and not is_flying(target)) for a in attackers
+    )):
         return values
     # Même traitement que les catapultes : aucune perte pour les tireurs.
     values = dict(values, hidden=True, no_riposte=target["name"], losses=0.0)
