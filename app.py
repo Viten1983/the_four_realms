@@ -5935,24 +5935,6 @@ def main():
                     "une cible ennemie."  
                 )  
   
-    with st.container(key="lw_page_scores"):  
-        render_scores(g, view)  
-  
-    with st.container(key="lw_page_legend"):  
-        st.caption(  
-            "Cadre rouge : faction qui doit jouer · "  
-            "Pions ronds : unités militaires · "  
-            "Pions carrés : bâtiments et bases · "  
-            "Contour jaune : sélection · "  
-            "Cases vertes : déplacement ou placement possible · "  
-            "Cases rouges : cible ennemie accessible · "  
-            "Pièce grise : action déjà effectuée · "
-            "Attente N : pièce disponible dans N fins de tour · "
-            "Numéros sur le plateau : combats du journal de bord · "
-            "Case rouge et « −N PF » : dégâts subis · "
-            "Rond vert : unité recrutée · Rond orange : bâtiment ou base construit"
-        )  
-  
     with st.container(key="lw_page_board"):  
         st.divider()
         if st.session_state.get("ui_faction_view") in FACTION_SHEETS:
@@ -5967,6 +5949,22 @@ def main():
             render_placement_confirmation(
                 g, view, 1600, 1000, 32, 40
             )
+  
+    # Légende : sous le plateau.
+    with st.container(key="lw_page_legend"):  
+        st.caption(  
+            "Cadre rouge : faction qui doit jouer · "  
+            "Pions ronds : unités militaires · "  
+            "Pions carrés : bâtiments et bases · "  
+            "Contour jaune : sélection · "  
+            "Cases vertes : déplacement ou placement possible · "  
+            "Cases rouges : cible ennemie accessible · "  
+            "Pièce grise : action déjà effectuée · "
+            "Attente N : pièce disponible dans N fins de tour · "
+            "Numéros sur le plateau : combats du journal de bord · "
+            "Case rouge et « −N PF » : dégâts subis · "
+            "Rond vert : unité recrutée · Rond orange : bâtiment ou base construit"
+        )  
   
     with st.container(key="lw_page_log"):  
         render_log(view)  
@@ -17727,9 +17725,9 @@ def render_board(g, view, readonly=False):
         bundle = room.get("bundle") or bundle
     viewer = fx_viewer(bundle, g)
     recent = fx_recent(g, viewer)
-    render_journal(bundle, g, viewer, recent)
-    # Bilan du dernier combat : juste sous le journal de bord.
-    render_last_combat()
+    # Bandeau des deux factions : juste au-dessus du plateau.
+    with st.container(key="lw_page_scores"):
+        render_scores(g, view)
     render_phase_badge(g, view)
     # Grande annonce de la phase sur le plateau (2 secondes, une fois par phase).
     st.session_state["_lw_phase_banner"] = None if g.get("winner") is not None else {
@@ -17740,7 +17738,11 @@ def render_board(g, view, readonly=False):
     }
     payload = fx_board_payload(bundle, g, viewer, recent)
     st.session_state["_lw_fx"] = payload if recent or payload["deaths"] or payload["harvest"] else None
-    return _lw_fx_previous_render_board(g, view, readonly)
+    result = _lw_fx_previous_render_board(g, view, readonly)
+    # Sous le plateau : le journal de bord, puis le bilan du dernier combat.
+    render_journal(bundle, g, viewer, recent)
+    render_last_combat()
+    return result
 
 
 # --- Contre l'IA : le message résume, le détail est dans le journal.
@@ -18448,17 +18450,28 @@ def building_summary(view, piece):
             "récolte l'or ou le mana grâce aux ouvriers posés sur les cases voisines"
             if faction_id(view, owner) == DERNIERS_NES else "récolte l'or ou le mana des cases voisines"
         )
-    recruits = []
-    for unit in data.get("units", []):
+    names = list(data.get("units", []))
+    if piece["kind"] == "base" and faction_id(view, owner) == DERNIERS_NES and WORKER not in names:
+        names.insert(0, WORKER)
+
+    def label_of(unit):
         try:
             batch = recruitment_batch(view, owner, unit)
         except Exception:
             batch = UNITS.get(unit, {}).get("batch", 1)
-        recruits.append(f"{batch} × {unit}" if batch and batch > 1 else unit)
-    if piece["kind"] == "base" and faction_id(view, owner) == DERNIERS_NES and WORKER not in data.get("units", []):
-        recruits.insert(0, WORKER)
-    if recruits:
-        parts.append("permet de recruter " + ", ".join(recruits))
+        return f"{batch} × {unit}" if batch and batch > 1 else unit
+
+    # Groupées par âge : on voit ce qui est déjà disponible et ce qui
+    # s'ouvrira aux âges suivants.
+    by_age = {}
+    for unit in names:
+        by_age.setdefault(UNIT_AGES.get(unit, 1), []).append(label_of(unit))
+    if by_age:
+        roman = {1: "I", 2: "II", 3: "III"}
+        parts.append("permet de recruter — " + " · ".join(
+            f"âge {roman.get(age, age)} : " + ", ".join(units)
+            for age, units in sorted(by_age.items())
+        ))
     upgrades = [name for name, up in UPGRADES.items() if up.get("building") == piece["name"] and up.get("owner") == faction_id(view, owner)]
     if upgrades:
         parts.append("vend les améliorations " + ", ".join(f"« {u} »" for u in upgrades))
@@ -18763,6 +18776,27 @@ div:has(> .st-key-lw_phase_badge) {
 }
 .lw-badge-line { display: block; line-height: 1.45; }
 .lw-badge-sub { font-size: 12.5px; opacity: 0.92; }
+/* Rappel « à toi de jouer », juste sous le bandeau, tant que c'est ton tour. */
+.lw-your-turn {
+    display: block;
+    width: fit-content;
+    clear: both;
+    margin: 6px 0 0 10px;
+    padding: 5px 14px;
+    border-radius: 9px;
+    background: rgba(21, 128, 61, 0.95);
+    border: 2px solid #86efac;
+    color: #ffffff;
+    font-weight: 900;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+    animation: lw-your-turn-pulse 1.8s ease-in-out infinite;
+}
+@keyframes lw-your-turn-pulse {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.28); }
+}
 </style>
 """
 
@@ -18839,6 +18873,12 @@ def render_phase_badge(g, view=None):
         clock = f' · ⏱️ <span class="lw-clock" data-start="{seconds}">{seconds // 60:02d}:{seconds % 60:02d}</span>'
         clock_css = LW_CLOCK_CSS.replace("SECONDS", str(seconds))
     lines = [f"Tour {g['turn']}, {label}", next_moves, money, bases + clock]
+    # Rappel permanent, tant que c'est à ce joueur d'agir.
+    your_turn = g.get("winner") is None and g.get("active") == viewer and not (
+        g["phase"] == "build" and viewer in (g.get("ready") or [])
+    )
+    if st.query_params.get("room"):
+        your_turn = your_turn and not online_readonly()
     with st.container(key="lw_phase_badge"):
         st.markdown(
             PHASE_BADGE_CSS + clock_css
@@ -18847,7 +18887,8 @@ def render_phase_badge(g, view=None):
                 f'<span class="lw-badge-line{"" if n == 0 else " lw-badge-sub"}">{line}</span>'
                 for n, line in enumerate(lines)
             )
-            + "</div>",
+            + "</div>"
+            + ('<div class="lw-your-turn">⚔ À TOI DE JOUER</div>' if your_turn else ""),
             unsafe_allow_html=True,
         )
 
