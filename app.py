@@ -6881,7 +6881,7 @@ DECIMANT_SPELLS = {
 }
 
 AGE_REFERENCE["Déferlants"][1].append(
-    ("Kamikaze", "Unité · Mare après Mutation kamikaze · explose : 2 PF sur la cible, 1 PF à gauche et à droite")
+    ("Kamikaze", "Unité · Mare après Mutation kamikaze · explose : 2 PF sur la cible, 1 PF à gauche et à droite (alliés compris)")
 )
 AGE_REFERENCE["Déferlants"][2].extend([
     ("Enragé", "Unité · 3 dégâts sur la cible et ses 2 voisines, alliés compris"),
@@ -7435,11 +7435,9 @@ def kamikaze_attack(g, attacker_id, target_id):
     apply_damage(g, target, 2.0, source, report, "Cible de l'explosion")
 
     for pos in flanks:
-        for victim in pieces_at(g, pos):
-            if victim["owner"] != owner:
-                apply_damage(
-                    g, victim, 1.0, source, report, "Case voisine de l'explosion"
-                )
+        for victim in list(pieces_at(g, pos)):
+            # Une explosion ne fait pas de tri : les alliés aussi encaissent.
+            apply_damage(g, victim, 1.0, source, report, "Case voisine de l'explosion")
 
     g["_combat_report"] = report
     next_activation(g)
@@ -7984,7 +7982,7 @@ def render_kamikaze_controls(g, unit, target, prefix):
     flanks = flank_cells(tuple(target["pos"]), routes[unit["id"]][-2])
     st.info(
         f"Le Kamikaze explose : -2 PF sur {target['name']} "
-        f"({coord(target['pos'])}), -1 PF aux ennemis en "
+        f"({coord(target['pos'])}), -1 PF à toutes les pièces (alliées comprises) en "
         + (" et ".join(coord(pos) for pos in flanks) or "—")
         + ". Le Kamikaze est détruit."
     )
@@ -18357,7 +18355,7 @@ UNIT_BONUS = {
     # Déferlants
     "Déferlant": ["Unité de base des Déferlants, recrutée par 2 à la Mare.",
                   "Peut muter en Kamikaze (amélioration Mutation kamikaze)."],
-    "Kamikaze": ["💥 Explose sur sa cible : 2 PF sur la cible, 1 PF à gauche et à droite.",
+    "Kamikaze": ["💥 Explose sur sa cible : 2 PF sur la cible, 1 PF à gauche et à droite (alliés compris).",
                  "Il disparaît en explosant."],
     "Aspergeur": ["Tir à distance.", "Peut muter en Rampant (amélioration Rampants)."],
     "Rampant": ["Se plante dans le sol (fin d'activation) : invisible, sauf détecteur à portée.",
