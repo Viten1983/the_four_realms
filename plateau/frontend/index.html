@@ -1311,10 +1311,19 @@
           { text: `−${pfNumber(taken)} PF`, color: PF_TAKEN },
         ]);
       }
+      // Dégâts de zone : chaque case touchée affiche les dégâts qu'elle
+      // reçoit (cases vides comprises), à la place des PF perdus.
+      const zone = ev.zone || [];
+      const zoneCells = new Set(zone.map(z => keyOf(z.pos[0], z.pos[1])));
+      zone.forEach((z, i) => {
+        if (combined && onTarget(z.pos)) return;
+        floatText(pt(z.pos), `−${pfNumber(z.damage)} PF`, PF_DEALT, i * 120);
+      });
       (ev.hits || []).forEach((hit, i) => {
         const c = pt(hit.pos);
         if (hit.damage) {
-          if (!combined || !onTarget(hit.pos)) {
+          const zoned = zoneCells.has(keyOf(hit.pos[0], hit.pos[1]));
+          if (!zoned && (!combined || !onTarget(hit.pos))) {
             const label = hitLabel(hit, ev);
             if (ev.dealt && hit.id === ev.target_id && hit.owner !== ev.owner) {
               label.text = `−${pfNumber(Number(ev.dealt))} PF`;

@@ -20812,5 +20812,135 @@ def render_online_lobby(room, seat):
         st.markdown = original_markdown
 
 
+# ============================================================
+# DÉGÂTS DE ZONE SUR LE PLATEAU
+# Chaque case touchée par une attaque de zone affiche les dégâts infligés
+# sur cette case (« −6 PF » sur les 3 cases du Golem, 4 / 2 / 2 pour une
+# catapulte…), cases vides comprises. Les tireurs qui touchent deux cases
+# (Elfe avec Instinct elfique, Archer avec Flèches enflammées, Griffon)
+# tirent deux projectiles.
+# ============================================================
+
+FX_ZONE_ACTIONS = {"attack", "ranged_attack", "kamikaze_attack"}
+FX_MULTI_SHOT_UNITS = {"Elfe", ARCHER, GRIFFON}
+
+
+def fx_cell_key(pos):
+    return f"{int(pos[0])},{int(pos[1])}"
+
+
+def fx_zone_plan(g, name, args):
+    """{« q,r »: dégâts} prévus sur chaque case de la zone, avant l'action."""
+    cells = {}
+    try:
+        if name == "ranged_attack" and len(args) > 1:
+            attacker, target = entity(g, args[0]), entity(g, args[1])
+            values = ranged_attack_values(g, attacker, target)
+            target_pos = tuple(target["pos"])
+            damage = float(values["damage"])
+            if attacker["name"] in SIEGE_RANGES:
+                cells = {tuple(pos): float(d) for pos, d in siege_impact_cells(attacker, target_pos).items()}
+                cells[target_pos] = damage
+                if attacker["name"] == HELL_CATAPULT:
+                    behind = cell_behind(tuple(attacker["pos"]), target_pos)
+                    if behind is not None:
+                        cells[tuple(behind)] = damage
+            elif values.get("impact_cells"):
+                cells = {tuple(pos): damage for pos in values["impact_cells"]}
+            elif values.get("elfique_back") is not None:
+                cells = {target_pos: damage, tuple(values["elfique_back"]): damage}
+            elif ranged_second_cell(g, attacker):
+                flanks = flank_cells(target_pos, tuple(attacker["pos"]))
+                chosen = choose_second_cell(g, attacker["owner"], flanks, args[2] if len(args) > 2 else None, args[1])
+                cells = {target_pos: damage}
+                if chosen is not None:
+                    cells[tuple(chosen)] = damage
+        elif name in ("attack", "kamikaze_attack") and len(args) > 1:
+            ids = list(args[0]) if isinstance(args[0], (list, tuple)) else [args[0]]
+            sim = copy.deepcopy(g)
+            checked, target, routes = prepare_attack(sim, ids, args[1])
+            target_pos = tuple(target["pos"])
+            if name == "kamikaze_attack" or any(a["name"] == KAMIKAZE for a in checked):
+                flanks = flank_cells(target_pos, tuple(routes[checked[0]["id"]][-2]))
+                cells = {target_pos: 2.0}
+                cells.update({tuple(pos): 1.0 for pos in flanks})
+            else:
+                cells = {target_pos: sum(float(a["pf"]) + float(a.get("attack_bonus", 0) or 0) for a in checked)}
+                for a in checked:
+                    flanks = flank_cells(target_pos, tuple(routes[a["id"]][-2]))
+                    if a["name"] == ENRAGED:
+                        for pos in flanks:
+                            cells[tuple(pos)] = cells.get(tuple(pos), 0.0) + 3.0
+                    elif a["name"] in SECOND_CELL_UNITS:
+                        chosen = choose_second_cell(sim, a["owner"], flanks, args[4] if len(args) > 4 else None, args[1])
+                        if chosen is not None:
+                            bonus = float(a["pf"]) + float(a.get("attack_bonus", 0) or 0)
+                            cells[tuple(chosen)] = cells.get(tuple(chosen), 0.0) + bonus
+    except Exception:
+        return {}
+    cells = {pos: d for pos, d in cells.items() if pos in CELL_SET and d > 0}
+    return {fx_cell_key(pos): d for pos, d in cells.items()} if len(cells) > 1 else {}
+
+
+# Dégâts réellement appliqués, case par case (valeur de l'attaque, pas
+# seulement les PF perdus) : sert aussi pour les sorts de zone.
+_lw_zone_previous_apply_damage = apply_damage
+
+
+def apply_damage(g, victim, damage, source, report, role):
+    zone = g.get("_fx_zone_hits")
+    before = float(victim.get("pf", 0) or 0)
+    result = _lw_zone_previous_apply_damage(g, victim, damage, source, report, role)
+    if isinstance(zone, dict) and victim.get("id") not in (g.get("_fx_zone_actors") or ()):
+        still_there = any(e is victim for e in g["entities"])
+        if not still_there or float(victim.get("pf", 0) or 0) < before - 1e-9:
+            k = fx_cell_key(victim["pos"])
+            zone[k] = max(zone.get(k, 0.0), float(damage))
+    return result
+
+
+_lw_zone_previous_game_action = game_action
+
+
+def game_action(bundle, fn, *args):
+    name = getattr(fn, "__name__", "")
+    if name not in FX_ZONE_ACTIONS:
+        return _lw_zone_previous_game_action(bundle, fn, *args)
+    g = bundle["game"]
+    plan = fx_zone_plan(g, name, args)
+    seq = int(g.get("fx_seq", 0))
+    actor_ids, _ = fx_action_ids(name, args)
+    g["_fx_zone_hits"] = {}
+    g["_fx_zone_actors"] = list(actor_ids)
+    try:
+        result = _lw_zone_previous_game_action(bundle, fn, *args)
+    finally:
+        # Marqueurs temporaires : jamais laissés dans la partie.
+        recorded = bundle["game"].pop("_fx_zone_hits", None) or {}
+        bundle["game"].pop("_fx_zone_actors", None)
+        g.pop("_fx_zone_hits", None)
+        g.pop("_fx_zone_actors", None)
+    zone = dict(plan)
+    zone.update(recorded)
+    g = bundle["game"]
+    journal = g.get("journal") or []
+    entry = journal[-1] if journal else None
+    if entry is None or int(entry.get("seq", 0)) <= seq or len(zone) < 2:
+        return result
+    entry["zone"] = [
+        {"pos": [int(v) for v in k.split(",")], "damage": d} for k, d in zone.items()
+    ]
+    # Tireurs qui touchent deux cases : un projectile par case.
+    shots = entry.get("shots") or []
+    actor = (entry.get("actor_name") or "")
+    if name == "ranged_attack" and shots and actor in FX_MULTI_SHOT_UNITS:
+        first = shots[0]
+        aimed = {fx_cell_key(s["to"]) for s in shots}
+        entry["shots"] = shots + [
+            dict(first, to=z["pos"]) for z in entry["zone"] if fx_cell_key(z["pos"]) not in aimed
+        ]
+    return result
+
+
 if __name__ == "__main__":
     main()
