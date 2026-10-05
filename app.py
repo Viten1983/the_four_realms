@@ -5466,7 +5466,7 @@ def render_scores(g, view):
                 label = "⚜ PARTIE TERMINÉE"
             elif active:
                 crest = "#7fd65f"
-                label = "⚔ À TOI DE JOUER"
+                label = "⚔ EN JEU"
             else:
                 crest = "#e0573f"
                 label = "⏳ EN ATTENTE"
@@ -17975,14 +17975,29 @@ def prepare_attack(g, attacker_ids, target_id):
 
 
 # ============================================================
-# UNITÉS DE CORPS À CORPS : PAS DE RIPOSTE CONTRE UN TIREUR
+# UNITÉS DE CORPS À CORPS : PAS DE RIPOSTE CONTRE UN TIR
 # Une unité sans tir (Ravageur, Silencieux, Déferlant…) ne riposte pas
-# quand un tireur l'attaque, même au contact : seules les attaques au
-# corps à corps d'unités de mêlée entraînent sa riposte.
+# quand un tireur la vise à distance. En revanche, un tireur qui attaque
+# au contact combat au corps à corps : il subit la riposte comme les autres.
 # ============================================================
 
 def melee_only(piece):
     return piece.get("kind") == "unit" and UNITS.get(piece.get("name"), {}).get("range", 0) <= 0
+
+
+def shoots_from_afar(attacker, target):
+    """Vrai si ce tireur frappe à distance (au contact, c'est du corps à corps).
+    Les unités sans combat rapproché (Golem, Décimant, Mage, armes de siège)
+    tirent toujours, même sur une case voisine."""
+    name = attacker.get("name")
+    if not is_shooter(attacker):
+        return False
+    if name in (STONE_GOLEM, DECIMANT) or name in MAGES or name in SIEGE_RANGES or name in NO_ATTACK_UNITS:
+        return True
+    try:
+        return distance(tuple(attacker["pos"]), tuple(target["pos"])) > 1
+    except (KeyError, TypeError, ValueError):
+        return True
 
 
 _lw_shooter_previous_combat_values = combat_values
@@ -17990,7 +18005,7 @@ _lw_shooter_previous_combat_values = combat_values
 
 def combat_values(attackers, target):
     values = _lw_shooter_previous_combat_values(attackers, target)
-    if not (attackers and melee_only(target) and all(is_shooter(a) for a in attackers)):
+    if not (attackers and melee_only(target) and all(shoots_from_afar(a, target) for a in attackers)):
         return values
     # Même traitement que les catapultes : aucune perte pour les tireurs.
     values = dict(values, hidden=True, no_riposte=target["name"], losses=0.0)
