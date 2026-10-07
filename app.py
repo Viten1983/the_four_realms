@@ -21258,6 +21258,7 @@ def ai_adapt_params(P, profile, rng, level):
         P["advance"] = max(P["advance"], base["advance"])
         P["attack_drive"] = max(P["attack_drive"], base["attack_drive"])
     P["_adapt"] = {"protect": protect, "hunt": hunt, "support": support, "roles": roles}
+    P["_level"] = level
     return P, reasons
 
 
@@ -21639,6 +21640,185 @@ def render_general_info(bundle):
     if isinstance(bundle, dict) and isinstance(bundle.get("game"), dict) and ai_config(bundle) is not None:
         if st.button("📊 Statistiques de la partie", key="open_game_stats"):
             show_game_stats(bundle)
+
+
+# ============================================================
+# IA : L'OR SERT À QUELQUE CHOSE (tous les niveaux)
+# Constat (statistiques de parties) : l'IA finissait ses productions avec
+# des centaines, voire des milliers d'or inutilisés. Chaque bâtiment ne
+# recrute qu'une fois par tour : sans assez de bâtiments recruteurs, et
+# avec des unités qui demandent du mana, l'or s'empilait.
+# Après sa production habituelle, l'IA écoule donc le surplus, dans cet
+# ordre et tant qu'il en reste :
+#   1. recruter avec tous les bâtiments encore libres ;
+#   2. bâtir un recruteur de plus (unités sans mana si le mana manque),
+#      en construction accélérée si la caisse le permet, puis recruter ;
+#   3. fonder une base sur les cases d'or et de mana libres.
+# L'or gardé pour l'âge suivant et la part non dépensée du niveau
+# (Débutant 25 %, Intermédiaire 10 %) restent intouchés.
+# Les unités « faibles » (que l'IA n'exploite pas : Mage, Gobelin…) ne
+# passent plus devant les autres grâce à leur âge plus élevé.
+# ============================================================
+
+AI_SURPLUS_ROUNDS = 6
+AI_SURPLUS_BASES = 9      # bases au plus (au-delà, l'or va à l'armée)
+
+
+def ai_level_name(P):
+    if P.get("_level") in AI_PARAMS:
+        return P["_level"]
+    return next((lvl for lvl, params in AI_PARAMS.items() if params is P), "intermediaire")
+
+
+def ai_buildable_units(g, me, building):
+    age = g["players"][me]["age"]
+    return [
+        n for n in faction_of(g, me)["buildings"].get(building, {}).get("units", [])
+        if n in UNITS and n != WORKER and n not in AI_WEAK_UNITS and n not in NO_ATTACK_UNITS
+        and UNIT_AGES.get(n, 1) <= age and UNIT_MAX_AGES.get(n, 9) >= age
+        and unit_requirement_met(g, me, n)
+    ]
+
+
+def ai_surplus_buildings(g, me, mana_short):
+    """Recruteurs à ajouter, les meilleurs d'abord ; sans mana si le mana manque."""
+    ranked = []
+    for name, data in faction_of(g, me)["buildings"].items():
+        if not data.get("units") or not building_is_available(g, me, name):
+            continue
+        if building_limit_reached(g, me, name):
+            continue
+        units = ai_buildable_units(g, me, name)
+        if mana_short:
+            units = [n for n in units if UNITS[n]["mana"] == 0]
+        if not units:
+            continue
+        best = max(UNITS[n]["pf"] * (1.3 if UNITS[n]["range"] else 1.0) + UNIT_AGES.get(n, 1) for n in units)
+        ranked.append((-best, data["cost"], name))
+    return [name for *_, name in sorted(ranked)]
+
+
+def ai_spend_surplus(g, me, P, goal_gold):
+    """Écoule l'or au-dessus de « goal_gold » : armée, recruteurs, bases."""
+    global AI_BUILDS_PER_TURN
+    floors = ai_age_floors(g, me, P)
+    goal_gold = max(goal_gold, floors[0])
+    saved = AI_BUILDS_PER_TURN
+    AI_BUILDS_PER_TURN = 99
+    try:
+        for _ in range(AI_SURPLUS_ROUNDS):
+            if ai_gold(g, me) <= goal_gold:
+                break
+            before = (ai_gold(g, me), ai_mana(g, me), len(g["entities"]))
+            g = ai_step_recruit(g, me, P, floors, ai_mana(g, me) > floors[1])
+            mana_short = ai_mana(g, me) - floors[1] < 2
+            for name in ai_surplus_buildings(g, me, mana_short):
+                if ai_gold(g, me) <= goal_gold:
+                    break
+                cost = faction_of(g, me)["buildings"][name]["cost"]
+                # Assez pour l'accélérer et recruter aussitôt : on le fait.
+                fast = ai_gold(g, me) - goal_gold >= int(cost * 1.5) + 200
+                new = ai_try_build(g, me, name, P, floors, accelerated=fast)
+                if new is None and fast:
+                    new = ai_try_build(g, me, name, P, floors)
+                if new is not None:
+                    g = new
+                    g = ai_step_recruit(g, me, P, floors, ai_mana(g, me) > floors[1])
+                    break
+            bases = sum(e["owner"] == me and e["kind"] == "base" for e in g["entities"])
+            if ai_gold(g, me) > goal_gold and bases < AI_SURPLUS_BASES and not is_vagabond(g, me):
+                if faction_id(g, me) == DERNIERS_NES:
+                    g = ai_dn_colony(g, me, floors)
+                else:
+                    g = ai_try_colony(g, me, floors)
+            if (ai_gold(g, me), ai_mana(g, me), len(g["entities"])) == before:
+                break
+    finally:
+        AI_BUILDS_PER_TURN = saved
+    return g
+
+
+AI_ECONOMY_FIX_DISABLED = set()   # sièges joués sans ces corrections (tournois de comparaison)
+
+
+def ai_army_behind(g, me):
+    """Armée en retard : moins d'unités que le numéro du tour (6 au plus),
+    ou moins de 70 % de la valeur de l'armée adverse visible."""
+    mine = [
+        e for e in g["entities"]
+        if e["owner"] == me and e["kind"] == "unit" and e["name"] != WORKER and not is_hero(e)
+    ]
+    theirs = [
+        e for e in ai_enemy_pieces(g, me)
+        if e["kind"] == "unit" and e["name"] != WORKER and not is_hero(e)
+    ]
+    value = sum(ai_unit_value(e) for e in mine)
+    return len(mine) < min(int(g["turn"]), 6) or value < 0.7 * sum(ai_unit_value(e) for e in theirs)
+
+
+def ai_army_first(g, me, P):
+    """Début de production : chaque recruteur prend sa meilleure unité.
+    Armée en retard : l'or gardé pour l'âge suivant y passe aussi (sauf
+    la course des Vagabonds vers l'âge II)."""
+    vagabond_rush = is_vagabond(g, me) and g["players"][me]["age"] == 1
+    floors = ai_age_floors(g, me, P)
+    if ai_army_behind(g, me) and not vagabond_rush:
+        floors = (0, 0)
+    elif ai_age_due(g, me, P) and (P["save_for_age"] or vagabond_rush):
+        # L'âge suivant se paie juste après : son prix complet reste en caisse.
+        cost = ai_next_age_cost(g, me)
+        if cost is not None:
+            floors = (max(floors[0], cost[0]), max(floors[1], cost[1]))
+    return ai_step_recruit(g, me, P, floors, ai_mana(g, me) > floors[1])
+
+
+_lw_surplus_previous_ai_production = ai_production
+
+
+def ai_production(draft, me, level):
+    if me in AI_ECONOMY_FIX_DISABLED:
+        return _lw_surplus_previous_ai_production(draft, me, level)
+    start_gold = ai_gold(draft, me)
+
+    def first():
+        return ai_army_first(draft, me, ai_params(level))
+
+    _AI_PLAN_LEVEL[me] = level
+    try:
+        draft = ai_with_adaptation(draft, me, level, first)
+    except AI_ERRORS:
+        pass
+    finally:
+        _AI_PLAN_LEVEL.pop(me, None)
+    g = _lw_surplus_previous_ai_production(draft, me, level)
+
+    def spend():
+        P = ai_params(level)
+        return ai_spend_surplus(g, me, P, (1.0 - P["spend"]) * start_gold)
+
+    # Même contexte que la production : plan de faction et adaptation au joueur.
+    _AI_PLAN_LEVEL[me] = level
+    try:
+        return ai_with_adaptation(g, me, level, spend)
+    except AI_ERRORS:
+        return g
+    finally:
+        _AI_PLAN_LEVEL.pop(me, None)
+
+
+_lw_surplus_previous_ai_unit_score = ai_unit_score
+
+
+def ai_unit_score(g, me, name, P, want_mana, boosted):
+    score = _lw_surplus_previous_ai_unit_score(g, me, name, P, want_mana, boosted)
+    if me in AI_ECONOMY_FIX_DISABLED:
+        return score
+    if (name in AI_WEAK_UNITS or name in NO_ATTACK_UNITS) and score and score > 0:
+        plan = ai_plan(g, me)
+        # Sauf besoin réel du plan (détecteur contre l'invisible, par exemple).
+        if plan is None or ai_plan_unit_weight(g, me, plan, name) < 2.0:
+            score *= 0.25
+    return score
 
 
 if __name__ == "__main__":
