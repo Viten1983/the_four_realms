@@ -12129,13 +12129,25 @@ _lw_collide_previous_commit_plan = commit_plan
 def restore_strike_positions(bundle):
     """Avant le dévoilement, le héros revient sur sa case de frappe : sa cible
     existe encore chez l'adversaire. Il reprendra la case au dévoilement."""
-    for plan in (bundle.get("committed"), bundle.get("draft")):
-        if not plan:
-            continue
+    plans = [plan for plan in (bundle.get("committed"), bundle.get("draft")) if plan]
+    for plan in plans:
         for hero in plan["entities"]:
             origin = hero.pop("strike_from", None)
             if origin is not None and is_hero(hero):
                 hero["pos"] = origin
+                # Une recrue posée entre-temps sur la case laissée par le héros
+                # lui cède la place : case libre la plus proche.
+                for piece in plan["entities"]:
+                    if piece is hero or tuple(piece["pos"]) != tuple(origin) or piece["owner"] != hero["owner"]:
+                        continue
+                    taken = {tuple(e["pos"]) for p in plans for e in p["entities"]}
+                    target = nearest_free_cell(bundle["game"], taken, piece, tuple(origin))
+                    if target is not None:
+                        piece["pos"] = list(target)
+                        plan.setdefault("log", []).append(
+                            f"T{turn_label(bundle['game'])} — {hero['name']} reprend sa case "
+                            f"{coord(origin)} : {piece['name']} se décale en {coord(target)}."
+                        )
 
 
 def commit_plan(bundle):
