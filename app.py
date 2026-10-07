@@ -20946,5 +20946,472 @@ def game_action(bundle, fn, *args):
     return result
 
 
+# ============================================================
+# IA ADAPTATIVE : PROFIL DU JOUEUR (Expert et Destructeur sanguinaire)
+#
+# L'IA observe les derniers tours du joueur humain, en dresse un profil,
+# puis ajuste sa façon de jouer pour le contrer. Rien de lourd : pas
+# d'apprentissage, seulement une mémoire, des compteurs et des poids.
+#
+#   1. MÉMOIRE   ai_player_memory   : le journal de bord (150 dernières
+#                                     actions) relu tour par tour, sur les
+#                                     AI_MEMORY_TURNS derniers tours.
+#   2. PROFIL    ai_player_profile  : fréquences (attaque, déplacement,
+#                                     garde), distance préférée, unités
+#                                     fétiches, cible répétée, rythme des
+#                                     attaques, unité « spammée », style.
+#   3. RÉPONSE   ai_adapt_params    : le profil devient des réglages de
+#                                     l'IA (pression, prudence, groupes,
+#                                     chasse, protection, production).
+#   4. VARIATION ai_adapt_noise     : petite variation des réglages à
+#                                     chaque tour (±12 %), reproductible :
+#                                     l'IA n'est pas exploitable, mais un
+#                                     même tour rejoué donne le même coup.
+#
+# Le profil se recalcule à chaque décision depuis le journal : rien n'est
+# ajouté à la sauvegarde, et « Annuler mon dernier coup » reste cohérent.
+# Les autres niveaux ne sont pas concernés.
+# ============================================================
+
+AI_ADAPTIVE_LEVELS = {"expert", "sanguinaire"}
+AI_MEMORY_TURNS = 6        # tours du joueur gardés en mémoire
+AI_ADAPT_NOISE = 0.12      # variation contrôlée des réglages, par tour
+AI_FOCUS_HITS = 2          # coups sur une même unité : c'est une cible répétée
+AI_MOVE_KINDS = {"move"}
+AI_ATTACK_KINDS = {
+    "melee", "arrow", "rock", "fireball", "fire", "acid", "arcane", "ice",
+    "dark", "explosion", "impact",
+}
+_AI_ADAPT = threading.local()
+
+
+def ai_unit_role(name):
+    """« flyer », « ranged » ou « melee » : sert aux contre-stratégies."""
+    if is_flying({"name": name}):
+        return "flyer"
+    return "ranged" if UNITS.get(name, {}).get("range", 0) > 0 else "melee"
+
+
+def ai_recruit_name(entry):
+    """Nom de l'unité d'une ligne « Recrute 2 × Tigre des forêts (K9, K10) »."""
+    match = _re.match(r"Recrute (?:\d+ × )?(.+?) \(", entry.get("text") or "")
+    return match.group(1) if match else None
+
+
+def ai_player_memory(g, me):
+    """Actions du joueur humain, regroupées par tour, sur les derniers tours.
+    Chaque tour : attaques (distance, attaquants, cibles), déplacements
+    (avance ou recul vers les bases de l'IA), passes, recrues."""
+    human = 1 - me
+    first_round = int(g.get("turn", 1)) - AI_MEMORY_TURNS + 1
+    my_bases = [tuple(e["pos"]) for e in g["entities"] if e["owner"] == me and e["kind"] == "base"]
+    rounds = {}
+    for entry in g.get("journal") or []:
+        try:
+            if entry.get("owner") != human or int(entry.get("round") or 0) < first_round:
+                continue
+        except (TypeError, ValueError):
+            continue
+        r = rounds.setdefault(int(entry["round"]), {
+            "attacks": 0, "ranged": 0, "moves": 0, "advances": 0, "retreats": 0,
+            "passes": 0, "distances": [], "attackers": [], "targets": [], "recruits": {},
+        })
+        kind = entry.get("kind")
+        if kind in AI_ATTACK_KINDS and entry.get("phase") == "move":
+            r["attacks"] += 1
+            shots = entry.get("shots") or []
+            if shots and shots[0].get("from") and shots[0].get("to"):
+                r["distances"].append(distance(tuple(shots[0]["from"]), tuple(shots[0]["to"])))
+                if shots[0].get("kind") != "melee":
+                    r["ranged"] += 1
+            r["attackers"] += list(entry.get("actor_ids") or [])
+            r["targets"] += [h["id"] for h in entry.get("hits") or [] if h.get("owner") == me and h.get("damage")]
+        elif kind in AI_MOVE_KINDS and entry.get("phase") == "move":
+            r["moves"] += 1
+            for move in entry.get("moves") or []:
+                if my_bases and move.get("from") and move.get("to"):
+                    before = min(distance(tuple(move["from"]), b) for b in my_bases)
+                    after = min(distance(tuple(move["to"]), b) for b in my_bases)
+                    if after < before:
+                        r["advances"] += 1
+                    elif after > before:
+                        r["retreats"] += 1
+        elif kind == "pass":
+            r["passes"] += 1
+        elif kind == "recruit":
+            name = ai_recruit_name(entry)
+            # Ouvriers : de l'économie, pas un choix de combat.
+            if name and name != WORKER and name in UNITS:
+                r["recruits"][name] = r["recruits"].get(name, 0) + len(entry.get("spawns") or [1])
+    return [rounds[k] | {"round": k} for k in sorted(rounds)]
+
+
+def ai_attack_expectation(memory):
+    """Probabilité que le joueur attaque à sa prochaine phase de manœuvres :
+    moyenne qui privilégie les tours récents, corrigée si le joueur suit un
+    rythme régulier (une attaque tous les 2 tours, par exemple)."""
+    played = [r for r in memory if r["attacks"] or r["moves"] or r["passes"]]
+    if not played:
+        return 0.0, None
+    p = 0.0
+    for r in played:
+        p = 0.5 * p + 0.5 * (1.0 if r["attacks"] else 0.0)
+    rhythm = None
+    pattern = [bool(r["attacks"]) for r in played[-4:]]
+    if len(pattern) == 4 and all(pattern[i] != pattern[i + 1] for i in range(3)):
+        # Attaque un tour sur deux : le prochain tour se devine.
+        rhythm = "un tour sur deux"
+        p = 0.85 if not pattern[-1] else 0.15
+    elif len(pattern) >= 3 and all(pattern[-3:]):
+        rhythm = "à chaque tour"
+        p = max(p, 0.9)
+    return p, rhythm
+
+
+def ai_player_profile(g, me):
+    """Profil du joueur humain, construit à partir de sa mémoire et du plateau."""
+    human = 1 - me
+    memory = ai_player_memory(g, me)
+    n = max(1, len(memory))
+    attacks = sum(r["attacks"] for r in memory)
+    ranged = sum(r["ranged"] for r in memory)
+    moves = sum(r["moves"] for r in memory)
+    advances = sum(r["advances"] for r in memory)
+    retreats = sum(r["retreats"] for r in memory)
+    passes = sum(r["passes"] for r in memory)
+    distances = [d for r in memory for d in r["distances"]]
+
+    fighters = [
+        e for e in g["entities"]
+        if e["owner"] == human and e["kind"] == "unit" and e["name"] not in (WORKER,) and not is_hero(e)
+    ]
+    their_bases = [tuple(e["pos"]) for e in g["entities"] if e["owner"] == human and e["kind"] == "base"]
+    # Garde : part des unités du joueur restées près de ses bases.
+    guard = (
+        sum(min(distance(tuple(e["pos"]), b) for b in their_bases) <= 3 for e in fighters) / len(fighters)
+        if fighters and their_bases else 0.0
+    )
+
+    # Unités fétiches : celles qui attaquent le plus souvent.
+    used = {}
+    for r in memory:
+        for uid in r["attackers"]:
+            used[uid] = used.get(uid, 0) + 1
+    alive = {e["id"]: e for e in fighters}
+    carries = [uid for uid, c in sorted(used.items(), key=lambda x: (-x[1], x[0])) if c >= 2 and uid in alive][:2]
+    strongest = sorted(fighters, key=lambda e: -ai_unit_value(e))[:3]
+    strong_share = (
+        sum(used.get(e["id"], 0) for e in strongest) / max(1, sum(used.values()))
+        if used else 0.0
+    )
+
+    # Cible répétée : une unité de l'IA frappée encore et encore.
+    hit = {}
+    for r in memory:
+        for uid in r["targets"]:
+            hit[uid] = hit.get(uid, 0) + 1
+    mine = {e["id"] for e in g["entities"] if e["owner"] == me}
+    focus = [uid for uid, c in sorted(hit.items(), key=lambda x: (-x[1], x[0])) if c >= AI_FOCUS_HITS and uid in mine][:2]
+
+    # Composition (plateau) et recrues (mémoire) : ce que le joueur « spamme ».
+    roles = {"flyer": 0.0, "ranged": 0.0, "melee": 0.0}
+    for e in fighters:
+        roles[ai_unit_role(e["name"])] += ai_unit_value(e)
+    total = sum(roles.values()) or 1.0
+    shares = {k: v / total for k, v in roles.items()}
+    recruits = {}
+    for r in memory:
+        for name, count in r["recruits"].items():
+            recruits[name] = recruits.get(name, 0) + count
+    spam = None
+    if recruits:
+        name, count = max(recruits.items(), key=lambda x: (x[1], x[0]))
+        if count >= 4 and count >= 0.5 * sum(recruits.values()):
+            spam = name
+
+    expected, rhythm = ai_attack_expectation(memory)
+    attack_rate = attacks / n
+    # Agressivité : attaques, avancées, peu de garde ni de recul.
+    aggression = (
+        min(1.0, attack_rate / 3.0) * 0.55
+        + (advances / max(1, advances + retreats)) * 0.3
+        + (1.0 - guard) * 0.15
+    )
+    if len(memory) < 2:
+        style = "inconnu"
+    elif aggression >= 0.55:
+        style = "agressif"
+    elif aggression <= 0.3 or (guard >= 0.6 and attack_rate < 1.0):
+        style = "défensif"
+    else:
+        style = "équilibré"
+    return {
+        "turns": len(memory), "style": style, "aggression": aggression,
+        "attack_rate": attack_rate, "move_rate": moves / n, "pass_rate": passes / n,
+        "guard": guard, "ranged_attacks": ranged / attacks if attacks else 0.0,
+        "distance": sum(distances) / len(distances) if distances else None,
+        "carries": carries, "strong_share": strong_share, "focus": focus,
+        "shares": shares, "spam": spam, "expected_attack": expected, "rhythm": rhythm,
+        "attacked_last": bool(memory and memory[-1]["attacks"] and memory[-1]["round"] >= int(g.get("turn", 1)) - 1),
+    }
+
+
+def ai_adapt_noise(g, me):
+    """Générateur reproductible : même partie, même tour, même siège → même tirage."""
+    seed = "|".join(str(v) for v in (
+        g.get("turn"), me, g.get("first"),
+        faction_id(g, 0), faction_id(g, 1), len(g.get("log") or []) // 400,
+    ))
+    return random.Random(seed)
+
+
+def ai_adapt_params(P, profile, rng, level):
+    """Réglages de l'IA ajustés au profil du joueur. Renvoie (P, raisons)."""
+    P = dict(P)
+    reasons = []
+    bloodthirsty = level == "sanguinaire"
+    # Le Destructeur sanguinaire ne recule jamais vraiment : ses réglages
+    # prudents ne bougent qu'à moitié.
+    soft = 0.5 if bloodthirsty else 1.0
+    protect, hunt, support, roles = {}, {}, 0.0, {}
+
+    if profile["turns"] >= 2:
+        if profile["style"] == "défensif":
+            # Joueur qui se terre : plus de pression, plus vite vers ses bases.
+            P["advance"] *= 1.25
+            P["attack_drive"] = P.get("attack_drive", 0.0) + 120.0
+            P["base_bonus"] *= 1.15
+            P["danger"] *= 0.8
+            reasons.append("Tu joues défensif : l'IA met plus de pression sur tes bases.")
+        elif profile["style"] == "agressif":
+            # Joueur qui fonce : tenir les passages, rester groupé, contre-attaquer.
+            P["defend"] = P["defend"] * (1.0 + 0.6 * soft)
+            P["danger"] *= 1.0 + 0.3 * soft
+            P["anticipate_weight"] = P.get("anticipate_weight", AI_ANTICIPATE_WEIGHT) * 1.2
+            support += 40.0
+            reasons.append("Tu joues agressif : l'IA garde ses passages et reste groupée pour contre-attaquer.")
+
+        # Rythme des attaques : l'IA se prépare au coup qui vient, puis punit.
+        expected = profile["expected_attack"]
+        if expected >= 0.6:
+            P["danger"] *= 1.0 + 0.5 * expected * soft
+            P["defend"] = P["defend"] * (1.0 + 0.4 * expected * soft)
+            support += 60.0 * expected
+            when = f" ({profile['rhythm']})" if profile["rhythm"] else ""
+            reasons.append(f"Tu attaques de façon prévisible{when} : l'IA s'y prépare et reste groupée.")
+        if profile["attacked_last"]:
+            P["attack_drive"] = P.get("attack_drive", 0.0) + 100.0
+            reasons.append("Tu viens d'attaquer : l'IA cherche à punir tes unités avancées.")
+
+        # Cible répétée : l'unité visée compte davantage, elle recule ou se fait couvrir.
+        for uid in profile["focus"]:
+            protect[uid] = 0.8
+        if profile["focus"]:
+            support += 30.0
+            reasons.append("Tu t'acharnes sur la même unité : l'IA la protège ou la fait reculer.")
+
+        # Unités fétiches : les abattre en priorité.
+        for uid in profile["carries"]:
+            hunt[uid] = 0.6
+        if profile["carries"] and profile["strong_share"] >= 0.4:
+            reasons.append("Tu comptes sur tes unités les plus fortes : l'IA les chasse en priorité.")
+
+        # Contre-stratégie de production et de placement.
+        shares = profile["shares"]
+        spam_role = ai_unit_role(profile["spam"]) if profile["spam"] else None
+        if shares["flyer"] >= 0.35 or spam_role == "flyer":
+            roles["anti_air"] = 1.4
+            reasons.append("Beaucoup d'unités volantes en face : l'IA produit de quoi les abattre.")
+        if profile["ranged_attacks"] >= 0.55 or shares["ranged"] >= 0.5 or spam_role == "ranged":
+            # Contre les tireurs : réduire la distance vite, au corps à corps.
+            P["advance"] *= 1.15
+            roles["melee"] = roles.get("melee", 1.0) * 1.3
+            roles["flyer"] = roles.get("flyer", 1.0) * 1.2
+            reasons.append("Tu harcèles à distance : l'IA referme l'écart et produit du corps à corps.")
+        elif (profile["attack_rate"] >= 1.0 and profile["ranged_attacks"] <= 0.2) or shares["melee"] >= 0.7 or spam_role == "melee":
+            # Contre la mêlée : des tireurs, et garder ses distances.
+            roles["ranged"] = roles.get("ranged", 1.0) * 1.3
+            P["danger"] *= 1.0 + 0.1 * soft
+            reasons.append("Tu fonces au corps à corps : l'IA produit plus de tireurs.")
+        if profile["spam"]:
+            reasons.append(f"Tu recrutes surtout des {profile['spam']} : l'IA adapte sa production.")
+
+    # Variation contrôlée : jamais deux tours tout à fait identiques.
+    for name in ("advance", "danger"):
+        P[name] *= 1.0 + rng.uniform(-AI_ADAPT_NOISE, AI_ADAPT_NOISE)
+    P["attack_drive"] = max(0.0, P.get("attack_drive", 0.0) + 120.0 * rng.uniform(-AI_ADAPT_NOISE, AI_ADAPT_NOISE))
+    if bloodthirsty:
+        # Le sanguinaire garde au moins sa soif de destruction d'origine.
+        base = AI_PARAMS["sanguinaire"]
+        P["advance"] = max(P["advance"], base["advance"])
+        P["attack_drive"] = max(P["attack_drive"], base["attack_drive"])
+    P["_adapt"] = {"protect": protect, "hunt": hunt, "support": support, "roles": roles}
+    return P, reasons
+
+
+def ai_adaptation(g, me, level):
+    """(réglages adaptés, profil, raisons) pour ce siège, ou None."""
+    if level not in AI_ADAPTIVE_LEVELS or g.get("phase") not in ("build", "move"):
+        return None
+    profile = ai_player_profile(g, me)
+    P, reasons = ai_adapt_params(_lw_adapt_previous_ai_params(level), profile, ai_adapt_noise(g, me), level)
+    return P, profile, reasons
+
+
+# --- Branchements dans l'IA existante ---------------------------------
+
+_lw_adapt_previous_ai_params = ai_params
+
+
+def ai_params(level):
+    active = getattr(_AI_ADAPT, "params", None)
+    if active is not None and active[0] == level:
+        return active[1]
+    return _lw_adapt_previous_ai_params(level)
+
+
+def ai_with_adaptation(g, me, level, run):
+    """Exécute « run » avec les réglages adaptés au joueur (niveaux concernés)."""
+    try:
+        adapted = ai_adaptation(g, me, level)
+    except AI_ERRORS:
+        adapted = None
+    if adapted is None:
+        return run()
+    previous = getattr(_AI_ADAPT, "params", None)
+    _AI_ADAPT.params = (level, adapted[0])
+    try:
+        return run()
+    finally:
+        _AI_ADAPT.params = previous
+
+
+_lw_adapt_previous_ai_move_step = ai_move_step
+
+
+def ai_move_step(bundle, me, level):
+    return ai_with_adaptation(
+        bundle["game"], me, level, lambda: _lw_adapt_previous_ai_move_step(bundle, me, level)
+    )
+
+
+_lw_adapt_previous_ai_production = ai_production
+
+
+def ai_production(draft, me, level):
+    return ai_with_adaptation(
+        draft, me, level, lambda: _lw_adapt_previous_ai_production(draft, me, level)
+    )
+
+
+_lw_adapt_previous_ai_material = ai_material
+
+
+def ai_material(g, me, P):
+    """Valeur matérielle, avec l'unité harcelée surpondérée (à protéger) et
+    les unités fétiches du joueur surpondérées (à abattre)."""
+    score = _lw_adapt_previous_ai_material(g, me, P)
+    adapt = P.get("_adapt")
+    if not adapt or g.get("winner") is not None or not (adapt["protect"] or adapt["hunt"]):
+        return score
+    own_value = P.get("own_value", 1.0)
+    for e in g["entities"]:
+        weight = adapt["protect"].get(e["id"]) if e["owner"] == me else adapt["hunt"].get(e["id"])
+        if not weight:
+            continue
+        if e["owner"] == me:
+            score += weight * own_value * ai_piece_value(g, e)
+        elif visible_to_player(g, e, me):
+            score -= weight * ai_piece_value(g, e)
+    return score
+
+
+_lw_adapt_previous_ai_context = ai_context
+
+
+def ai_context(g, me, P):
+    ctx = _lw_adapt_previous_ai_context(g, me, P)
+    if P.get("_adapt"):
+        ctx["allies"] = {
+            tuple(e["pos"]): e["id"] for e in g["entities"]
+            if e["owner"] == me and e["kind"] == "unit" and e["name"] != WORKER
+        }
+    return ctx
+
+
+_lw_adapt_previous_ai_place_score = ai_place_score
+
+
+def ai_place_score(ctx, unit, pos):
+    score = _lw_adapt_previous_ai_place_score(ctx, unit, pos)
+    adapt = ctx["P"].get("_adapt")
+    if not adapt:
+        return score
+    allies = ctx.get("allies") or {}
+    # Rester groupé : chaque allié voisin (2 au plus) rend la case plus sûre
+    # et prépare la contre-attaque.
+    if adapt["support"] and allies:
+        near = sum(1 for n in neighbors(pos) if allies.get(n) not in (None, unit["id"]))
+        score += adapt["support"] * min(2, near)
+    # Unité harcelée : elle fuit les cases où l'ennemi peut la frapper.
+    weight = adapt["protect"].get(unit["id"])
+    if weight and ctx["threats"]:
+        if any(distance(pos, where) <= move + reach for where, move, reach, _ in ctx["threats"]):
+            score -= weight * ai_unit_value(unit)
+    return score
+
+
+_lw_adapt_previous_ai_unit_score = ai_unit_score
+
+
+def ai_unit_score(g, me, name, P, want_mana, boosted):
+    score = _lw_adapt_previous_ai_unit_score(g, me, name, P, want_mana, boosted)
+    roles = (P.get("_adapt") or {}).get("roles")
+    if not roles or not score or score <= 0:
+        return score
+    role = ai_unit_role(name)
+    weight = roles.get(role, 1.0)
+    if "anti_air" in roles and (role == "flyer" or (role == "ranged" and name not in GROUND_ONLY_SHOOTERS)):
+        weight *= roles["anti_air"]
+    return score * weight
+
+
+# --- Ce que l'IA a compris : visible dans « Informations générales » ---
+
+def render_ai_profile(bundle):
+    config = ai_config(bundle)
+    if config is None or config.get("level") not in AI_ADAPTIVE_LEVELS:
+        return
+    g = bundle["game"]
+    try:
+        adapted = ai_adaptation(g, config["seat"], config["level"])
+    except AI_ERRORS:
+        adapted = None
+    if adapted is None:
+        return
+    _, profile, reasons = adapted
+    with st.expander("🧠 Ce que l'IA a compris de ton jeu", expanded=False):
+        if profile["turns"] < 2:
+            st.caption("L'IA t'observe encore : il lui faut au moins 2 tours pour cerner ton style.")
+            return
+        distance_text = f" · distance d'attaque moyenne {profile['distance']:.1f} case(s)" if profile["distance"] else ""
+        st.markdown(
+            f"**Style : {profile['style']}** (sur {profile['turns']} tours) · "
+            f"{profile['attack_rate']:.1f} attaque(s) par tour{distance_text} · "
+            f"{round(100 * profile['guard'])} % de tes unités restent près de tes bases"
+        )
+        for line in reasons or ["Rien de marquant pour l'instant : l'IA joue son plan habituel."]:
+            st.caption("• " + line)
+
+
+_lw_adapt_previous_render_general_info = render_general_info
+
+
+def render_general_info(bundle):
+    _lw_adapt_previous_render_general_info(bundle)
+    if isinstance(bundle, dict) and isinstance(bundle.get("game"), dict):
+        render_ai_profile(bundle)
+
+
 if __name__ == "__main__":
     main()
