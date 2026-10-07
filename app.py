@@ -21425,5 +21425,221 @@ def render_general_info(bundle):
         render_ai_profile(bundle)
 
 
+# ============================================================
+# STATISTIQUES DE LA PARTIE (contre l'IA)
+# À chaque dévoilement des productions, une ligne par tour : or et mana
+# au début de la production, dépensés, récoltés ; âge, armée (unités et
+# PF), ouvriers, bâtiments, bases ; puis le bilan des manœuvres du tour
+# (PF infligés, pièces détruites). Bouton « 📊 Statistiques de la
+# partie » dans les informations générales.
+# ============================================================
+
+# La liste est remplacée, jamais modifiée en place : l'IA peut la partager.
+AI_SHARED_FIELDS = tuple(AI_SHARED_FIELDS) + ("stats",)
+STATS_COLORS = ["#3987e5", "#d95926"]  # toi (bleu), l'IA (orange)
+
+
+def stats_board(g, owner):
+    """Ce que ce joueur a sur le plateau."""
+    mine = [e for e in g["entities"] if e["owner"] == owner]
+    army = [e for e in mine if e["kind"] == "unit" and e["name"] != WORKER and not is_hero(e)]
+    structures = [e for e in mine if e["kind"] in ("building", "base") and not is_hero(e)]
+    player = g["players"][owner]
+    return {
+        "age": int(player.get("age", 1)),
+        "units": len(army),
+        "army_pf": round(sum(float(e["pf"]) for e in army), 1),
+        "workers": sum(e["name"] == WORKER for e in mine),
+        "heroes": sum(1 for e in mine if is_hero(e)),
+        "buildings": sum(e["kind"] == "building" for e in structures),
+        "bases": sum(e["kind"] == "base" for e in structures),
+        "structures_pf": round(sum(float(e["pf"]) for e in structures), 1),
+        "upgrades": len(player.get("upgrades", [])),
+        "recruited": int(sum((player.get("units_built") or {}).values())),
+        "bases_destroyed": int(player.get("bases", 0)),
+        "gold": int(player.get("gold", 0)),
+        "mana": int(player.get("mana", 0)),
+    }
+
+
+def stats_maneuvers(g, owner, turn):
+    """PF infligés et pièces ennemies détruites par ce joueur pendant les
+    manœuvres de ce tour (d'après le journal de bord)."""
+    dealt, kills = 0.0, 0
+    for entry in g.get("journal") or []:
+        if entry.get("owner") != owner or entry.get("round") != turn or entry.get("phase") != "move":
+            continue
+        for hit in entry.get("hits") or []:
+            if hit.get("owner") != owner and hit.get("damage"):
+                dealt += float(hit["damage"])
+                kills += bool(hit.get("destroyed"))
+    return round(dealt, 1), kills
+
+
+def stats_record_reveal(g, before, plans):
+    """Ligne du tour qui vient d'être dévoilé."""
+    turn = int(before["turn"])
+    row = {"turn": turn, "players": []}
+    for owner in (0, 1):
+        start = before["players"][owner]
+        planned = plans.get(owner) or start
+        spent_gold = max(0, int(start["gold"]) - int(planned["gold"]))
+        spent_mana = max(0, int(start["mana"]) - int(planned["mana"]))
+        now = g["players"][owner]
+        data = stats_board(g, owner)
+        data.update({
+            "gold_start": int(start["gold"]), "mana_start": int(start["mana"]),
+            "gold_spent": spent_gold, "mana_spent": spent_mana,
+            # Récolte : en fin de tour, connue au dévoilement suivant.
+            "gold_income": None, "mana_income": None,
+            "dealt": 0.0, "kills": 0,
+        })
+        row["players"].append(data)
+    rows = [r for r in (g.get("stats") or []) if r.get("turn") != turn]
+    # Le tour précédent est terminé : bilan des manœuvres et récolte complets.
+    if rows and rows[-1]["turn"] == turn - 1:
+        last = copy.deepcopy(rows[-1])
+        for owner in (0, 1):
+            data = last["players"][owner]
+            data["dealt"], data["kills"] = stats_maneuvers(g, owner, turn - 1)
+            data["gold_income"] = max(0, int(before["players"][owner]["gold"]) - int(data["gold"]))
+            data["mana_income"] = max(0, int(before["players"][owner]["mana"]) - int(data["mana"]))
+        rows[-1] = last
+    g["stats"] = rows + [row]
+
+
+_lw_stats_previous_commit_plan = commit_plan
+
+
+def commit_plan(bundle):
+    g = bundle["game"]
+    revealing = g["phase"] == "build" and bool(g.get("ready"))
+    if not revealing:
+        return _lw_stats_previous_commit_plan(bundle)
+    before = {
+        "turn": g["turn"],
+        "players": [{"gold": p.get("gold", 0), "mana": p.get("mana", 0)} for p in g["players"]],
+    }
+    plans = {}
+    first = g["ready"][0]
+    for owner, plan in ((first, bundle.get("committed")), (1 - first, bundle.get("draft"))):
+        if plan:
+            player = plan["players"][owner]
+            plans[owner] = {"gold": player.get("gold", 0), "mana": player.get("mana", 0)}
+    result = _lw_stats_previous_commit_plan(bundle)
+    try:
+        if bundle["game"]["phase"] == "move":
+            stats_record_reveal(bundle["game"], before, plans)
+    except Exception:  # les statistiques ne doivent jamais bloquer la partie
+        pass
+    return result
+
+
+def stats_rows(g):
+    """Lignes enregistrées, plus le tour en cours (bilan des manœuvres en direct)."""
+    rows = copy.deepcopy(g.get("stats") or [])
+    if rows and rows[-1]["turn"] == g["turn"]:
+        for owner in (0, 1):
+            rows[-1]["players"][owner]["dealt"], rows[-1]["players"][owner]["kills"] = stats_maneuvers(g, owner, g["turn"])
+    return rows
+
+
+STATS_COLUMNS = [
+    ("gold_start", "Or (début)"), ("gold_spent", "Or dépensé"), ("gold_income", "Or récolté"),
+    ("mana_start", "Mana (début)"), ("mana_spent", "Mana dépensé"), ("mana_income", "Mana récolté"),
+    ("age", "Âge"), ("units", "Unités"), ("army_pf", "PF de l'armée"), ("workers", "Ouvriers"),
+    ("heroes", "Héros"), ("buildings", "Bâtiments"), ("bases", "Bases"),
+    ("structures_pf", "PF bâtiments + bases"), ("upgrades", "Améliorations"),
+    ("recruited", "Unités recrutées (cumul)"), ("dealt", "PF infligés"),
+    ("kills", "Pièces détruites"), ("bases_destroyed", "Bases ennemies détruites (cumul)"),
+]
+
+
+@st.dialog("📊 Statistiques de la partie", width="large")
+def show_game_stats(bundle):
+    import pandas as pd
+
+    g = bundle["game"]
+    config = ai_config(bundle) or {"seat": 1 - g["active"]}
+    ai_seat = config["seat"]
+    names = {
+        1 - ai_seat: f"Toi ({faction_of(g, 1 - ai_seat)['name']})",
+        ai_seat: f"IA ({faction_of(g, ai_seat)['name']})",
+    }
+    order = [1 - ai_seat, ai_seat]
+    rows = stats_rows(g)
+    if not rows:
+        st.info("Les statistiques commencent au premier dévoilement des productions : reviens après ton premier tour.")
+        return
+
+    # Résumé : les grands totaux, côte à côte.
+    def total(owner, field):
+        return sum(r["players"][owner][field] for r in rows)
+
+    def age_turn(owner, age):
+        return next((r["turn"] for r in rows if r["players"][owner]["age"] >= age), None)
+
+    columns = st.columns(2)
+    for column, owner in zip(columns, order):
+        last = rows[-1]["players"][owner]
+        with column:
+            st.markdown(f"**{names[owner]}**")
+            a, b, c = st.columns(3)
+            a.metric("Or dépensé", f"{total(owner, 'gold_spent'):,}".replace(",", " "))
+            b.metric("Unités recrutées", last["recruited"])
+            c.metric("PF infligés", f"{total(owner, 'dealt'):g}")
+            ages = [f"âge {roman} au tour {t}" for roman, age in (("II", 2), ("III", 3))
+                    if (t := age_turn(owner, age)) is not None]
+            st.caption(
+                f"Armée actuelle : {last['units']} unités, {last['army_pf']:g} PF · "
+                f"{last['bases']} bases · {last['buildings']} bâtiments · "
+                + (", ".join(ages) if ages else "toujours à l'âge I")
+            )
+
+    charts, table = st.tabs(["📈 Graphiques", "📋 Tour par tour"])
+    with charts:
+        series = [
+            ("gold_spent", "Or dépensé par tour"), ("gold_income", "Or récolté par tour"),
+            ("army_pf", "PF de l'armée"), ("units", "Nombre d'unités"),
+            ("buildings", "Nombre de bâtiments"), ("dealt", "PF infligés par tour"),
+        ]
+        for i in range(0, len(series), 2):
+            pair = st.columns(2)
+            for column, (field, title) in zip(pair, series[i:i + 2]):
+                frame = pd.DataFrame(
+                    {names[o]: [r["players"][o][field] for r in rows] for o in order},
+                    index=pd.Index([r["turn"] for r in rows], name="Tour"),
+                )
+                with column:
+                    st.markdown(f"**{title}**")
+                    st.line_chart(frame, color=STATS_COLORS, height=220)
+    with table:
+        records = []
+        for r in rows:
+            for owner in order:
+                record = {"Tour": r["turn"], "Camp": names[owner]}
+                record.update({
+                    label: "—" if r["players"][owner][field] is None else r["players"][owner][field]
+                    for field, label in STATS_COLUMNS
+                })
+                records.append(record)
+        st.dataframe(pd.DataFrame(records), hide_index=True, width="stretch")
+        st.caption(
+            "Or et mana « début » : avant la production du tour. « Dépensé » : production du tour. "
+            "« Récolté » : récolte de fin de tour (et butin), connue au tour suivant. "
+            "PF infligés et pièces détruites : manœuvres du tour."
+        )
+
+
+_lw_stats_previous_render_general_info = render_general_info
+
+
+def render_general_info(bundle):
+    _lw_stats_previous_render_general_info(bundle)
+    if isinstance(bundle, dict) and isinstance(bundle.get("game"), dict) and ai_config(bundle) is not None:
+        if st.button("📊 Statistiques de la partie", key="open_game_stats"):
+            show_game_stats(bundle)
+
+
 if __name__ == "__main__":
     main()
