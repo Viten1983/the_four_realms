@@ -20013,9 +20013,12 @@ def board_event(event, g, view):
             clicked = at(view, require_position(event.get("pos")))
         except Exception:
             clicked = None
-        if clicked is not None and clicked["owner"] in (0, 1) and clicked["owner"] != board_viewer(g):
-            st.session_state["ui_enemy_id"] = clicked["id"]
-            # Nouveau clic : le pop-up de la fiche s'ouvre (même s'il avait été fermé).
+        if clicked is not None and clicked["owner"] in (0, 1):
+            if clicked["owner"] != board_viewer(g):
+                st.session_state["ui_enemy_id"] = clicked["id"]
+            # Nouveau clic sur une pièce (alliée ou adverse) : son pop-up s'ouvre
+            # à côté d'elle (même s'il avait été fermé).
+            st.session_state["ui_popup_id"] = clicked["id"]
             st.session_state["ui_enemy_popup_key"] = event["event_id"]
     return _lw_enemy_previous_board_event(event, g, view)
 
@@ -20030,14 +20033,18 @@ _lw_enemy_previous_render_board = render_board
 
 
 def render_board(g, view, readonly=False):
-    # Pop-up de la pièce adverse cliquée : la même fiche que « Pièce adverse ».
-    piece = inspected_enemy(view)
+    # Pop-up de la pièce cliquée (alliée ou adverse) : la même fiche que le menu.
+    popup_id = st.session_state.get("ui_popup_id")
+    piece = next((e for e in view["entities"] if e["id"] == popup_id), None) if popup_id is not None else None
     key = st.session_state.get("ui_enemy_popup_key")
     card = None
     if piece is not None and key:
         header, lines, bonus = piece_card(g, view, piece)
+        mine = piece["owner"] == board_viewer(g)
         card = {
             "key": str(key),
+            "id": piece["id"],
+            "title": "📋 Ta pièce" if mine else "🔍 Pièce adverse",
             "header": md_to_html(header),
             "lines": [md_to_html(line) for line in lines],
             "bonus": [md_to_html(line) for line in bonus],
