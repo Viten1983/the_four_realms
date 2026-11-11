@@ -4474,6 +4474,7 @@ def render_board(g, view, readonly=False):
         phase_banner=st.session_state.get("_lw_phase_banner"),
         notice=st.session_state.get("_lw_board_notice"),
         turn_pop=st.session_state.get("_lw_turn_pop"),
+        enemy_card=st.session_state.get("_lw_enemy_card"),
         key=f"board_component_{st.session_state.ui_board_key}",
         default=None,
     )
@@ -18525,8 +18526,18 @@ def render_selected_card(g, view, piece=None, title="### 📋 Pièce sélectionn
     if piece is None:
         st.caption(empty)
         return
+    header, lines, bonus = piece_card(g, view, piece)
+    st.markdown(header)
+    st.markdown("  \n".join(lines))
+    if bonus:
+        st.markdown("**Capacités**")
+        st.markdown("\n".join(f"- {line}" for line in bonus))
+
+
+def piece_card(g, view, piece):
+    """(en-tête, lignes, capacités) de la fiche d'une pièce, en Markdown."""
     owner_name = faction_of(view, piece["owner"])["name"]
-    st.markdown(f"**{piece['name']}** — {owner_name} · {coord(piece['pos'])}")
+    header = f"**{piece['name']}** — {owner_name} · {coord(piece['pos'])}"
     lines = []
     max_pf = piece.get("max_pf")
     pf_text = f"{float(piece['pf']):g}" + (f" / {float(max_pf):g}" if max_pf and float(max_pf) != float(piece["pf"]) else "")
@@ -18573,10 +18584,7 @@ def render_selected_card(g, view, piece=None, title="### 📋 Pièce sélectionn
         if piece.get("wait"):
             lines.append(f"⏳ **Disponible dans** : {piece['wait']} fin(s) de tour")
         bonus = []
-    st.markdown("  \n".join(lines))
-    if bonus:
-        st.markdown("**Capacités**")
-        st.markdown("\n".join(f"- {line}" for line in bonus))
+    return header, lines, bonus
 
 
 def age_advance_possible(view, owner, target_age):
@@ -18702,6 +18710,8 @@ def render_sidebar(bundle):
                 ):
                     ai_undo_last_move()
                     st.rerun()
+            elif online and g["winner"] is None:
+                render_online_undo_button()
             if g["winner"] is not None:
                 # Partie terminée : retour direct à l'accueil.
                 if st.button("🏠 Retour à l'accueil", type="primary", width="stretch", key="end_go_home"):
@@ -20005,7 +20015,35 @@ def board_event(event, g, view):
             clicked = None
         if clicked is not None and clicked["owner"] in (0, 1) and clicked["owner"] != board_viewer(g):
             st.session_state["ui_enemy_id"] = clicked["id"]
+            # Nouveau clic : le pop-up de la fiche s'ouvre (même s'il avait été fermé).
+            st.session_state["ui_enemy_popup_key"] = event["event_id"]
     return _lw_enemy_previous_board_event(event, g, view)
+
+
+def md_to_html(text):
+    """**gras** -> <b>gras</b>, le reste échappé."""
+    import re as _re_md
+    return _re_md.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escape(text))
+
+
+_lw_enemy_previous_render_board = render_board
+
+
+def render_board(g, view, readonly=False):
+    # Pop-up de la pièce adverse cliquée : la même fiche que « Pièce adverse ».
+    piece = inspected_enemy(view)
+    key = st.session_state.get("ui_enemy_popup_key")
+    card = None
+    if piece is not None and key:
+        header, lines, bonus = piece_card(g, view, piece)
+        card = {
+            "key": str(key),
+            "header": md_to_html(header),
+            "lines": [md_to_html(line) for line in lines],
+            "bonus": [md_to_html(line) for line in bonus],
+        }
+    st.session_state["_lw_enemy_card"] = card
+    return _lw_enemy_previous_render_board(g, view, readonly)
 
 
 # ============================================================
@@ -20169,6 +20207,110 @@ def render_board(g, view, readonly=False):
     )
     st.session_state["_lw_turn_pop"] = None
     return _lw_turnpop_previous_render_board(g, view, readonly)
+
+
+# ============================================================
+# EN LIGNE : ANNULER SON DERNIER COUP
+# Tant que la main n'est pas passée à l'adversaire : en manœuvres, si
+# l'adversaire n'a rien joué depuis ; en production, tant que sa propre
+# production n'est pas validée. Avant chaque action, la partie (ou la
+# production privée) est mémorisée.
+# ============================================================
+
+ONLINE_UNDO_LIMIT = 30
+
+
+def online_undo_stack():
+    return st.session_state.setdefault("online_undo_stack", [])
+
+
+_lw_onundo_previous_perform = perform
+
+
+def perform(fn, *args):
+    bundle = st.session_state.get("bundle")
+    snapshot = None
+    room = online_active_room() if st.query_params.get("room") else None
+    seat = online_seat()
+    if (
+        room is not None and seat in (0, 1) and isinstance(bundle, dict)
+        and isinstance(bundle.get("game"), dict) and bundle["game"].get("winner") is None
+        and bundle["game"]["active"] == seat and not online_readonly()
+    ):
+        snapshot = copy.deepcopy(bundle)
+    try:
+        return _lw_onundo_previous_perform(fn, *args)
+    finally:
+        after = st.session_state.get("bundle")
+        if snapshot is not None and after is not bundle:
+            stack = online_undo_stack()
+            g = after["game"]
+            if snapshot["game"]["phase"] == "move" and (g["phase"] != "move" or g["active"] != seat):
+                # La main passe à l'adversaire : plus rien à annuler.
+                stack.clear()
+            elif snapshot["game"]["phase"] == "build" and g.get("ready"):
+                # Production validée : elle ne s'annule plus.
+                stack.clear()
+            else:
+                stack.append({
+                    "bundle": snapshot, "after": after,
+                    "turn": snapshot["game"]["turn"], "phase": snapshot["game"]["phase"],
+                })
+                del stack[:-ONLINE_UNDO_LIMIT]
+
+
+def online_undo_available(room, seat):
+    """Le dernier coup peut-il encore être annulé ?"""
+    stack = online_undo_stack()
+    if not stack or room is None or seat not in (0, 1) or room.get("bundle") is None:
+        return False
+    top = stack[-1]
+    g = room["bundle"]["game"]
+    if g.get("winner") is not None or g["turn"] != top["turn"] or g["phase"] != top["phase"]:
+        return False
+    if top["phase"] == "move":
+        # L'état partagé est encore exactement celui laissé par mon coup.
+        return g["active"] == seat and room["bundle"] is top["after"]
+    return not room["prod_ready"].get(seat)
+
+
+def online_undo_last_move(room, seat):
+    stack = online_undo_stack()
+    with online_lock():
+        if not online_undo_available(room, seat):
+            stack.clear()
+            st.session_state.ui_message = "Ce coup ne peut plus être annulé : l'adversaire a déjà joué."
+            return
+        top = stack.pop()
+        if top["phase"] == "move":
+            room["bundle"] = top["bundle"]
+        else:
+            room["drafts"][seat] = top["bundle"].get("draft")
+        room["version"] += 1
+    # Rien à publier : la page repart de l'état partagé restauré.
+    st.session_state.online_handed = None
+    st.session_state.ui_combat_report = None
+    st.session_state.ui_message = "↩️ Coup annulé : la partie revient juste avant ta dernière action."
+    bump_ui(clear_selection=True)
+
+
+def render_online_undo_button():
+    room = online_active_room() if st.query_params.get("room") else None
+    seat = online_seat()
+    if room is None:
+        return
+    available = online_undo_available(room, seat)
+    if not available and online_undo_stack():
+        online_undo_stack().clear()
+    if st.button(
+        "↩️ Annuler mon dernier coup",
+        disabled=not available,
+        width="stretch",
+        key="online_undo_button",
+        help="Revient juste avant ta dernière action, tant que la main n'est pas passée à l'adversaire.",
+    ):
+        online_undo_last_move(room, seat)
+        st.rerun()
 
 
 # ============================================================

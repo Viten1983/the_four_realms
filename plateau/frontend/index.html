@@ -1797,6 +1797,54 @@
       }
     }
 
+    // Fiche de la pièce adverse cliquée : pop-up flottant (page parente), à
+    // droite, qui ne bloque pas le plateau. ✕ ou Échap pour le fermer.
+    let enemyCardKey = null;
+    function closeEnemyCard() {
+      try {
+        const old = window.parent.document.getElementById("lw-enemy-card");
+        if (old) old.remove();
+      } catch (error) { /* ignoré */ }
+    }
+    function drawEnemyCard() {
+      const card = args.enemy_card;
+      if (!card || !card.key) { closeEnemyCard(); enemyCardKey = null; return; }
+      const id = `enemycard:${card.key}`;
+      let doc;
+      try { doc = window.parent.document; } catch (error) { return; }
+      let box = doc.getElementById("lw-enemy-card");
+      if (!box) {
+        // Déjà fermé pour ce clic : il ne revient qu'au prochain clic.
+        if (closedEnemyCards.has(card.key) || (playedFx.has(id) && enemyCardKey !== card.key)) return;
+        box = doc.createElement("div");
+        box.id = "lw-enemy-card";
+        box.style.cssText = "position:fixed;top:96px;right:24px;z-index:2147482500;width:300px;max-height:70vh;overflow:auto;"
+          + "background:linear-gradient(180deg,rgba(52,36,20,0.97),rgba(22,15,9,0.97));color:#f6e4b8;border:2px solid #d9b45f;"
+          + "border-radius:14px;padding:12px 14px 12px 14px;box-shadow:0 10px 28px rgba(0,0,0,0.6);"
+          + "font-family:'EB Garamond',Georgia,serif;font-size:15px;line-height:1.4;";
+        doc.body.appendChild(box);
+        if (!doc.__lwEnemyEsc) {
+          doc.__lwEnemyEsc = true;
+          doc.addEventListener("keydown", event => {
+            if (event.key === "Escape") { const b = doc.getElementById("lw-enemy-card"); if (b) b.querySelector("button").click(); }
+          });
+        }
+      }
+      rememberFx(id);
+      enemyCardKey = card.key;
+      const bonus = (card.bonus || []).length
+        ? `<div style="margin-top:8px;font-weight:700;color:#f1d68b">Capacités</div><ul style="margin:4px 0 0 18px;padding:0">${card.bonus.map(b => `<li>${b}</li>`).join("")}</ul>`
+        : "";
+      box.innerHTML = `<button type="button" title="Fermer (Échap)" style="position:absolute;top:6px;right:8px;width:28px;height:28px;border-radius:50%;`
+        + `border:1px solid #d9b45f;background:#2a1d10;color:#f1d68b;font-size:16px;font-weight:900;cursor:pointer;line-height:1">✕</button>`
+        + `<div style="font-family:Cinzel,Georgia,serif;font-weight:800;color:#f1d68b;margin:0 30px 6px 0">🔍 Pièce adverse</div>`
+        + `<div style="margin-bottom:6px">${card.header}</div>`
+        + `<div>${card.lines.join("<br>")}</div>` + bonus;
+      const key = card.key;
+      box.querySelector("button").addEventListener("click", () => { closedEnemyCards.add(key); closeEnemyCard(); });
+    }
+    const closedEnemyCards = new Set();
+
     // Message d'information au centre du plateau (ex. or ou mana insuffisant),
     // une fois par tentative, pendant 3 secondes.
     function drawNotice() {
@@ -2182,6 +2230,7 @@ if (reachable || placed) {
         queueFx();
         maybeAnnounce();
         drawTurnPop();
+        drawEnemyCard();
       }
       wrapper.scrollLeft = previousScrollLeft;
       wrapper.scrollTop = previousScrollTop;
